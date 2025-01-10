@@ -1,0 +1,37 @@
+use std::str::FromStr;
+use crate::backend::ast::ast::{Function, Program, Statement, Expression, UnaryOp};
+
+grammar;
+
+
+pub Program: Program = {
+  <f: Func> => Program::Func(f)
+};
+
+ID: String = {
+  <s:r"[a-zA-Z][a-zA-Z0-9]*"> => s.to_owned(),
+}
+
+Func: Function = {
+  "int" <id: ID> "(" ")" "{" <s : Statement> "}" => {
+    Function{name: id, body: s}
+  }
+};
+
+
+Statement: Statement = {
+  "return" <e: Expression> ";" => Statement::Return(e),
+};
+
+Expression: Expression = {
+  r"[0-9]+" => Expression::Int(i32::from_str(<>).unwrap()),
+  <p : PrefixOp> <e : Expression> => Expression::Unary(p, Box::new(e)),
+  "(" <e: Expression> ")" => <>,
+};
+
+PrefixOp: UnaryOp = {
+  "-" => UnaryOp::Neg,
+  "--" => UnaryOp::PrefixDec,
+  "~" => UnaryOp::Complement,
+};
+

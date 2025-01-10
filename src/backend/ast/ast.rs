@@ -1,0 +1,28 @@
+#[derive(Debug)]
+pub enum Program {
+    Func(Function),
+}
+
+#[derive(Debug)]
+pub struct Function {
+    pub name: String,
+    pub body: Statement,
+}
+
+#[derive(Debug)]
+pub enum Statement {
+    Return(Expression),
+}
+
+#[derive(Debug)]
+pub enum Expression {
+    Int(i32),
+    Unary(UnaryOp, Box<Expression>),
+}
+
+#[derive(Debug)]
+pub enum UnaryOp {
+    Neg,
+    PrefixDec,
+    Complement,
+}

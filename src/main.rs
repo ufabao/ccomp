@@ -1,25 +1,42 @@
-pub mod ast;
-pub mod codegen;
-use codegen::generate_assembly;
+use ccomp::backend::asm::assemblyast;
+use ccomp::backend::asm::assemblyast::{pretty_print, tacky_to_asm_ast};
+use ccomp::backend::asm::codegen::generate_assembly;
+use ccomp::backend::tacky::tacky;
+use ccomp::frontend::c_grammar;
+use std::fs;
 
-use lalrpop_util::lalrpop_mod;
+pub fn driver(path: &str) -> Result<String, String> {
+    let input = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(e) => return Err("Error reading file".to_string()),
+    };
 
-lalrpop_mod!(pub CGrammar);
+    let prog = match c_grammar::ProgramParser::new().parse(&input) {
+        Ok(prog) => prog,
+        Err(e) => {
+            return Err("Error parsing input".to_string());
+        }
+    };
+
+    let tac = tacky::ast_to_tacky(&prog);
+    let asm = tacky_to_asm_ast(&tac);
+    let mut passes = assemblyast::TACPasses::default();
+    let replaced_asm = passes.replace_pseudo(&asm);
+    let final_asm = passes.final_pass(&replaced_asm);
+    let code = generate_assembly(&final_asm);
+
+    Ok(code)
+}
 
 fn main() {
-    let expr = CGrammar::ProgramParser::new()
-        .parse("int main(){ return 2; }")
-        .unwrap();
-
-    match generate_assembly(&expr) {
-        Ok(code) => println!("{}", code),
-        Err(e) => eprintln!("Error: {}", e),
-    }
+    let code = driver("blah.c");
+    println!("{}", code.unwrap());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ccomp::backend::ast::codegen::generate_assembly;
     use std::fs;
     use std::process::Command;
     use tempfile::tempdir;
@@ -69,7 +86,7 @@ mod tests {
         ];
 
         for test in test_cases {
-            let ast = CGrammar::ProgramParser::new()
+            let ast = c_grammar::ProgramParser::new()
                 .parse(test.input)
                 .map_err(|e| format!("Parse error: {}", e))?;
             let assembly = generate_assembly(&ast)?;
@@ -82,5 +99,20 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_passes_and_negate() {
+        let code = driver("test_programs/complement_negate.c");
+        let return_value = compile_and_run(&code.unwrap());
+        match return_value {
+            Ok(val) => {
+                assert_eq!(val, 1);
+            }
+            Err(e) => {
+                println!("{}", e);
+                assert!(false);
+            }
+        }
     }
 }

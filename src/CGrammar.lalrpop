@@ -1,0 +1,57 @@
+use std::str::FromStr;
+use crate::ast::{Block, Func, Prog, Typename, Statement};
+
+grammar;
+
+
+pub Program: Prog = {
+  => Vec::new(),
+  <f:Func> <mut p: Program> => {
+    p.push(f);
+    p
+  }
+};
+
+ID: String = {
+  <s:r"[a-zA-Z][a-zA-Z0-9]*"> => s.to_owned(),
+}
+
+Int: i32 = {
+  r"[0-9]+" => i32::from_str(<>).unwrap()
+};
+
+
+Func: Box<Func> = {
+  <ret: Typename> <id: ID> "(" <par: Params> ")" <bod: Block> => {
+    Box::new(Func{name: id, rettype: ret, params: par, body: bod})
+  }
+};
+
+Params: Vec<(Typename, String)> = {
+  => Vec::new(),
+  <t: Typename> <id:ID> => vec![(t, id)],
+  <t:Typename> <id:ID> "," <mut rest: Params> => {
+    rest.insert(0, (t, id));
+    rest
+  }
+};
+
+Block: Vec<Statement> = {
+  "{" "}" => Vec::new(),
+  "{" <st : Statement> "}" => vec![st],
+  "{" <mut stmts: Block> <st: Statement> "}" => {
+    stmts.push(st);
+    stmts
+  } 
+}
+
+Statement: Statement = {
+  "return" <n: Int> ";" => Statement::Return(n),
+};
+
+
+Typename: Typename = {
+  "void" => Typename::Void,
+  "int" => Typename::Int,
+};
+

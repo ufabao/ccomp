@@ -3,44 +3,64 @@ use crate::backend::ast::ast::{Function, Program, Statement, Expression, BinaryO
 
 grammar;
 
-
 pub Program: Program = {
-  <f: Func> => Program::Func(f)
+    <f: Func> => Program::Func(f)
 };
 
 ID: String = {
-  <s:r"[a-zA-Z][a-zA-Z0-9]*"> => s.to_owned(),
+    <s:r"[a-zA-Z][a-zA-Z0-9]*"> => s.to_owned(),
 }
 
 Func: Function = {
-  "int" <id: ID> "(" "void" ")" "{" <s : Statement> "}" => {
-    Function{name: id, body: s}
-  }
+    "int" <id: ID> "(" "void" ")" "{" <s: Statement> "}" => {
+        Function{name: id, body: s}
+    }
 };
-
 
 Statement: Statement = {
-  "return" <e: Expression> ";" => Statement::Return(e),
+    "return" <e: Exp> ";" => Statement::Return(e),
 };
 
-Expression: Expression = {
-    Term,
-    <e1:Expression> "+" <e2:Term> => Expression::Binary(BinaryOp::Add, Box::new(e1), Box::new(e2)),
-    <e1:Expression> "-" <e2:Term> => Expression::Binary(BinaryOp::Sub, Box::new(e1), Box::new(e2)),
-};
-
-Term: Expression = {
+Exp: Expression = {
+    #[precedence(level="0")]
     Factor,
-    <e1:Term> "*" <e2:Factor> => Expression::Binary(BinaryOp::Mul, Box::new(e1), Box::new(e2)),
-    <e1:Term> "/" <e2:Factor> => Expression::Binary(BinaryOp::Div, Box::new(e1), Box::new(e2)),
-    <e1:Term> "%" <e2:Factor> => Expression::Binary(BinaryOp::Mod, Box::new(e1), Box::new(e2)),
+    
+    #[precedence(level="95")]
+    #[assoc(side="left")]
+    <e1:Exp> "||" <e2:Exp> => Expression::Binary(BinaryOp::Or, Box::new(e1), Box::new(e2)),
+    
+    #[precedence(level="90")]
+    #[assoc(side="left")]
+    <e1:Exp> "&&" <e2:Exp> => Expression::Binary(BinaryOp::And, Box::new(e1), Box::new(e2)),
+    
+    #[precedence(level="70")]
+    #[assoc(side="left")]
+    <e1:Exp> "==" <e2:Exp> => Expression::Binary(BinaryOp::Equal, Box::new(e1), Box::new(e2)),
+    <e1:Exp> "!=" <e2:Exp> => Expression::Binary(BinaryOp::NotEqual, Box::new(e1), Box::new(e2)),
+    
+    #[precedence(level="65")]
+    #[assoc(side="left")]
+    <e1:Exp> "<" <e2:Exp> => Expression::Binary(BinaryOp::LessThan, Box::new(e1), Box::new(e2)),
+    <e1:Exp> "<=" <e2:Exp> => Expression::Binary(BinaryOp::LessOrEqual, Box::new(e1), Box::new(e2)),
+    <e1:Exp> ">" <e2:Exp> => Expression::Binary(BinaryOp::GreaterThan, Box::new(e1), Box::new(e2)),
+    <e1:Exp> ">=" <e2:Exp> => Expression::Binary(BinaryOp::GreaterOrEqual, Box::new(e1), Box::new(e2)),
+    
+    #[precedence(level="55")]
+    #[assoc(side="left")]
+    <e1:Exp> "+" <e2:Exp> => Expression::Binary(BinaryOp::Add, Box::new(e1), Box::new(e2)),
+    <e1:Exp> "-" <e2:Exp> => Expression::Binary(BinaryOp::Sub, Box::new(e1), Box::new(e2)),
+    
+    #[precedence(level="50")]
+    #[assoc(side="left")]
+    <e1:Exp> "*" <e2:Exp> => Expression::Binary(BinaryOp::Mul, Box::new(e1), Box::new(e2)),
+    <e1:Exp> "/" <e2:Exp> => Expression::Binary(BinaryOp::Div, Box::new(e1), Box::new(e2)),
+    <e1:Exp> "%" <e2:Exp> => Expression::Binary(BinaryOp::Mod, Box::new(e1), Box::new(e2)),
 };
 
 Factor: Expression = {
     r"[0-9]+" => Expression::Int(i32::from_str(<>).unwrap()),
     "-" <e:Factor> => Expression::Unary(UnaryOp::Neg, Box::new(e)),
-    "--" <e:Factor> => Expression::Unary(UnaryOp::PrefixDec, Box::new(e)),
     "~" <e:Factor> => Expression::Unary(UnaryOp::Complement, Box::new(e)),
-    "(" <e:Expression> ")" => e,
+    "!" <e:Factor> => Expression::Unary(UnaryOp::Not, Box::new(e)),
+    "(" <e:Exp> ")" => e,
 };
-

@@ -1,24 +1,24 @@
 use ccomp::backend::asm::assemblyast;
 use ccomp::backend::asm::assemblyast::tacky_to_asm_ast;
 use ccomp::backend::asm::codegen::generate_assembly;
-use ccomp::backend::tacky::tacky;
+use ccomp::backend::tacky::ToTac;
 use ccomp::frontend::c_grammar;
 use std::fs;
 
 pub fn driver(path: &str) -> Result<String, String> {
     let input = match fs::read_to_string(path) {
         Ok(contents) => contents,
-        Err(e) => return Err("Error reading file".to_string()),
+        Err(e) => return Err(format!("Error reading file: {}", e)),
     };
 
     let prog = match c_grammar::ProgramParser::new().parse(&input) {
         Ok(prog) => prog,
         Err(e) => {
-            return Err("Error parsing input".to_string());
+            return Err(format!("Error parsing input: {}", e));
         }
     };
 
-    let tac = tacky::ast_to_tacky(&prog);
+    let tac = prog.to_tac();
     let asm = tacky_to_asm_ast(&tac);
     let mut passes = assemblyast::TACPasses::default();
     let replaced_asm = passes.replace_pseudo(&asm);

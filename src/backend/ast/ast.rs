@@ -21,14 +21,14 @@ pub enum Expression {
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum UnaryOp {
     Neg,
     PrefixDec,
     Complement,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinaryOp {
     Add,
     Sub,

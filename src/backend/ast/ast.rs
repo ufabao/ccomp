@@ -18,6 +18,7 @@ pub enum Statement {
 pub enum Expression {
     Int(i32),
     Unary(UnaryOp, Box<Expression>),
+    Binary(BinaryOp, Box<Expression>, Box<Expression>),
 }
 
 #[derive(Debug)]
@@ -25,4 +26,13 @@ pub enum UnaryOp {
     Neg,
     PrefixDec,
     Complement,
+}
+
+#[derive(Debug)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
 }

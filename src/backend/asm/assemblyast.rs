@@ -32,7 +32,7 @@ impl TACPasses {
                         ));
                     }
                     _ => {
-                        replaced_instructions.push(Instruction::Mov(src.clone(), dst.clone()));
+                        replaced_instructions.push(instruction.clone());
                     }
                 },
                 Instruction::Unary(op, val) => {
@@ -43,6 +43,54 @@ impl TACPasses {
                 }
                 Instruction::Return => {
                     replaced_instructions.push(Instruction::Return);
+                }
+                Instruction::Binary(binary_op, operand1, operand2) => {
+                    match (binary_op, operand1, operand2) {
+                        (BinaryOp::Add | BinaryOp::Sub, Operand::Stack(n1), Operand::Stack(n2)) => {
+                            replaced_instructions.push(Instruction::Mov(
+                                Operand::Stack(*n1),
+                                Operand::Reg(Register::R10d),
+                            ));
+                            replaced_instructions.push(Instruction::Binary(
+                                *binary_op,
+                                Operand::Reg(Register::R10d),
+                                Operand::Stack(*n2),
+                            ));
+                        }
+                        (BinaryOp::Mul, _, Operand::Stack(n)) => {
+                            replaced_instructions.push(Instruction::Mov(
+                                Operand::Stack(*n),
+                                Operand::Reg(Register::R11d),
+                            ));
+                            replaced_instructions.push(Instruction::Binary(
+                                *binary_op,
+                                operand1.clone(),
+                                Operand::Reg(Register::R11d),
+                            ));
+                            replaced_instructions.push(Instruction::Mov(
+                                Operand::Reg(Register::R11d),
+                                Operand::Stack(*n),
+                            ));
+                        }
+                        _ => {
+                            replaced_instructions.push(instruction.clone());
+                        }
+                    }
+                }
+                Instruction::IDiv(operand) => match operand {
+                    Operand::Imm(n) => {
+                        replaced_instructions.push(Instruction::Mov(
+                            Operand::Imm(*n),
+                            Operand::Reg(Register::R10d),
+                        ));
+                        replaced_instructions.push(Instruction::IDiv(Operand::Reg(Register::R10d)));
+                    }
+                    _ => {
+                        replaced_instructions.push(Instruction::IDiv(operand.clone()));
+                    }
+                },
+                Instruction::Cdq => {
+                    replaced_instructions.push(Instruction::Cdq);
                 }
             }
         }
@@ -73,10 +121,23 @@ impl TACPasses {
                         .push(Instruction::Unary(op.clone(), self.replace_operand(val)));
                 }
                 Instruction::AllocateStack(n) => {
-                    replaced_instructions.push(Instruction::AllocateStack(*n));
+                    replaced_instructions.push(instruction.clone());
                 }
                 Instruction::Return => {
                     replaced_instructions.push(Instruction::Return);
+                }
+                Instruction::Binary(binary_op, operand1, operand2) => {
+                    replaced_instructions.push(Instruction::Binary(
+                        *binary_op,
+                        self.replace_operand(operand1),
+                        self.replace_operand(operand2),
+                    ));
+                }
+                Instruction::IDiv(operand) => {
+                    replaced_instructions.push(Instruction::IDiv(self.replace_operand(operand)));
+                }
+                Instruction::Cdq => {
+                    replaced_instructions.push(Instruction::Cdq);
                 }
             }
         }
@@ -121,8 +182,44 @@ pub fn tacky_to_asm_ast(tacky: &tacky::Program) -> Program {
                         }
                         tacky::Instruction::Unary(op, src, dst) => {
                             instructions.push(Instruction::Mov(convert_val(src), convert_val(dst)));
-                            instructions.push(Instruction::Unary(convert_op(op), convert_val(dst)));
+                            instructions
+                                .push(Instruction::Unary(convert_unary_op(op), convert_val(dst)));
                         }
+                        tacky::Instruction::Binary(op, val1, val2, dst) => match op {
+                            tacky::BinaryOp::Div => {
+                                instructions.push(Instruction::Mov(
+                                    convert_val(val1),
+                                    Operand::Reg(Register::Rax),
+                                ));
+                                instructions.push(Instruction::Cdq);
+                                instructions.push(Instruction::IDiv(convert_val(val2)));
+                                instructions.push(Instruction::Mov(
+                                    Operand::Reg(Register::Rax),
+                                    convert_val(dst),
+                                ));
+                            }
+                            tacky::BinaryOp::Mod => {
+                                instructions.push(Instruction::Mov(
+                                    convert_val(val1),
+                                    Operand::Reg(Register::Rax),
+                                ));
+                                instructions.push(Instruction::Cdq);
+                                instructions.push(Instruction::IDiv(convert_val(val2)));
+                                instructions.push(Instruction::Mov(
+                                    Operand::Reg(Register::Rdx),
+                                    convert_val(dst),
+                                ));
+                            }
+                            _ => {
+                                instructions
+                                    .push(Instruction::Mov(convert_val(&val1), convert_val(&dst)));
+                                instructions.push(Instruction::Binary(
+                                    convert_binary_op(&op),
+                                    convert_val(&val2),
+                                    convert_val(&dst),
+                                ));
+                            }
+                        },
                     }
                 }
                 instructions
@@ -138,11 +235,20 @@ fn convert_val(val: &tacky::Val) -> Operand {
     }
 }
 
-fn convert_op(op: &tacky::UnaryOp) -> UnaryOp {
+fn convert_unary_op(op: &tacky::UnaryOp) -> UnaryOp {
     match op {
         tacky::UnaryOp::Neg => UnaryOp::Neg,
         tacky::UnaryOp::PrefixDec => UnaryOp::PrefixDec,
         tacky::UnaryOp::Complement => UnaryOp::Complement,
+    }
+}
+
+fn convert_binary_op(op: &tacky::BinaryOp) -> BinaryOp {
+    match op {
+        tacky::BinaryOp::Add => BinaryOp::Add,
+        tacky::BinaryOp::Sub => BinaryOp::Sub,
+        tacky::BinaryOp::Mul => BinaryOp::Mul,
+        _ => unreachable!(),
     }
 }
 
@@ -161,10 +267,19 @@ pub struct Function {
 pub enum Instruction {
     Mov(Operand, Operand),
     Unary(UnaryOp, Operand),
+    Binary(BinaryOp, Operand, Operand),
+    IDiv(Operand),
+    Cdq,
     AllocateStack(i32),
     Return,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+}
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOp {
     Neg,
@@ -183,73 +298,78 @@ pub enum Operand {
 #[derive(Debug, Clone, Copy)]
 pub enum Register {
     Rax,
+    Rdx,
     R10d,
+    R11d,
 }
 
-impl fmt::Display for Program {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Program::Func(function) => write!(f, "{}", function),
-        }
-    }
-}
+// impl fmt::Display for Program {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         match self {
+//             Program::Func(function) => write!(f, "{}", function),
+//         }
+//     }
+// }
 
-impl fmt::Display for Function {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Function {{")?;
-        writeln!(f, "    name: \"{}\",", self.name)?;
-        writeln!(f, "    instructions: [")?;
-        for instruction in &self.instructions {
-            writeln!(f, "        {},", instruction)?;
-        }
-        write!(f, "    ],")?;
-        writeln!(f, "}}")
-    }
-}
+// impl fmt::Display for Function {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         writeln!(f, "Function {{")?;
+//         writeln!(f, "    name: \"{}\",", self.name)?;
+//         writeln!(f, "    instructions: [")?;
+//         for instruction in &self.instructions {
+//             writeln!(f, "        {},", instruction)?;
+//         }
+//         write!(f, "    ],")?;
+//         writeln!(f, "}}")
+//     }
+// }
 
-impl fmt::Display for Instruction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            // For Mov, dst and src are swapped in display to match AT&T syntax
-            Instruction::Mov(dst, src) => write!(f, "Mov({}, {})", dst, src),
-            Instruction::Unary(op, operand) => write!(f, "Unary({}, {})", op, operand),
-            Instruction::AllocateStack(size) => write!(f, "AllocateStack({})", size),
-            Instruction::Return => write!(f, "Return"),
-        }
-    }
-}
+// impl fmt::Display for Instruction {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         match self {
+//             // For Mov, dst and src are swapped in display to match AT&T syntax
+//             Instruction::Mov(dst, src) => write!(f, "Mov({}, {})", dst, src),
+//             Instruction::Unary(op, operand) => write!(f, "Unary({}, {})", op, operand),
+//             Instruction::AllocateStack(size) => write!(f, "AllocateStack({})", size),
+//             Instruction::Return => write!(f, "Return"),
+//             Instruction::Binary(binary_op, operand, operand1) => todo!(),
+//             Instruction::IDiv(operand) => todo!(),
+//             Instruction::Cdq => todo!(),
+//         }
+//     }
+// }
 
-impl fmt::Display for UnaryOp {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            UnaryOp::Neg => write!(f, "Neg"),
-            UnaryOp::PrefixDec => write!(f, "PrefixDec"),
-            UnaryOp::Complement => write!(f, "Complement"),
-        }
-    }
-}
+// impl fmt::Display for UnaryOp {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         match self {
+//             UnaryOp::Neg => write!(f, "Neg"),
+//             UnaryOp::PrefixDec => write!(f, "PrefixDec"),
+//             UnaryOp::Complement => write!(f, "Complement"),
+//         }
+//     }
+// }
 
-impl fmt::Display for Operand {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Operand::Imm(value) => write!(f, "Imm({})", value),
-            Operand::Reg(reg) => write!(f, "Reg({})", reg),
-            Operand::Pseudo(name) => write!(f, "Pseudo(\"{}\")", name),
-            Operand::Stack(offset) => write!(f, "Stack({})", offset),
-        }
-    }
-}
+// impl fmt::Display for Operand {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         match self {
+//             Operand::Imm(value) => write!(f, "Imm({})", value),
+//             Operand::Reg(reg) => write!(f, "Reg({})", reg),
+//             Operand::Pseudo(name) => write!(f, "Pseudo(\"{}\")", name),
+//             Operand::Stack(offset) => write!(f, "Stack({})", offset),
+//         }
+//     }
+// }
 
-impl fmt::Display for Register {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Register::Rax => write!(f, "rax"),
-            Register::R10d => write!(f, "r10d"),
-        }
-    }
-}
+// impl fmt::Display for Register {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         match self {
+//             Register::Rax => write!(f, "rax"),
+//             Register::R10d => write!(f, "r10d"),
+//         }
+//     }
+// }
 
-// Helper function to pretty print a program
-pub fn pretty_print(program: &Program) -> String {
-    program.to_string()
-}
+// // Helper function to pretty print a program
+// pub fn pretty_print(program: &Program) -> String {
+//     program.to_string()
+// }

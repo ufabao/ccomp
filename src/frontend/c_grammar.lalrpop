@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use crate::backend::ast::ast::{Function, Program, Statement, Expression, UnaryOp};
+use crate::backend::ast::ast::{Function, Program, Statement, Expression, BinaryOp, UnaryOp};
 
 grammar;
 
@@ -13,7 +13,7 @@ ID: String = {
 }
 
 Func: Function = {
-  "int" <id: ID> "(" ")" "{" <s : Statement> "}" => {
+  "int" <id: ID> "(" "void" ")" "{" <s : Statement> "}" => {
     Function{name: id, body: s}
   }
 };
@@ -24,14 +24,23 @@ Statement: Statement = {
 };
 
 Expression: Expression = {
-  r"[0-9]+" => Expression::Int(i32::from_str(<>).unwrap()),
-  <p : PrefixOp> <e : Expression> => Expression::Unary(p, Box::new(e)),
-  "(" <e: Expression> ")" => <>,
+    Term,
+    <e1:Expression> "+" <e2:Term> => Expression::Binary(BinaryOp::Add, Box::new(e1), Box::new(e2)),
+    <e1:Expression> "-" <e2:Term> => Expression::Binary(BinaryOp::Sub, Box::new(e1), Box::new(e2)),
 };
 
-PrefixOp: UnaryOp = {
-  "-" => UnaryOp::Neg,
-  "--" => UnaryOp::PrefixDec,
-  "~" => UnaryOp::Complement,
+Term: Expression = {
+    Factor,
+    <e1:Term> "*" <e2:Factor> => Expression::Binary(BinaryOp::Mul, Box::new(e1), Box::new(e2)),
+    <e1:Term> "/" <e2:Factor> => Expression::Binary(BinaryOp::Div, Box::new(e1), Box::new(e2)),
+    <e1:Term> "%" <e2:Factor> => Expression::Binary(BinaryOp::Mod, Box::new(e1), Box::new(e2)),
+};
+
+Factor: Expression = {
+    r"[0-9]+" => Expression::Int(i32::from_str(<>).unwrap()),
+    "-" <e:Factor> => Expression::Unary(UnaryOp::Neg, Box::new(e)),
+    "--" <e:Factor> => Expression::Unary(UnaryOp::PrefixDec, Box::new(e)),
+    "~" <e:Factor> => Expression::Unary(UnaryOp::Complement, Box::new(e)),
+    "(" <e:Expression> ")" => e,
 };
 

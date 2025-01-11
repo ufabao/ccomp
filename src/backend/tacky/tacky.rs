@@ -31,6 +31,28 @@ fn expression_to_tacky(expr: &ast::Expression, instructions: &mut Vec<Instructio
             instructions.push(Instruction::Unary(unary_op_to_tacky(op), val, var.clone()));
             var
         }
+        ast::Expression::Binary(op, val1, val2) => {
+            let var1 = expression_to_tacky(&*val1, instructions);
+            let var2 = expression_to_tacky(&*val2, instructions);
+            let var = Val::Var(format!("t{}", instructions.len()));
+            instructions.push(Instruction::Binary(
+                binary_op_to_tacky(&op),
+                var1,
+                var2,
+                var.clone(),
+            ));
+            var
+        }
+    }
+}
+
+fn binary_op_to_tacky(op: &ast::BinaryOp) -> BinaryOp {
+    match op {
+        ast::BinaryOp::Add => BinaryOp::Add,
+        ast::BinaryOp::Sub => BinaryOp::Sub,
+        ast::BinaryOp::Mul => BinaryOp::Mul,
+        ast::BinaryOp::Div => BinaryOp::Div,
+        ast::BinaryOp::Mod => BinaryOp::Mod,
     }
 }
 
@@ -57,12 +79,22 @@ pub struct Function {
 pub enum Instruction {
     Return(Val),
     Unary(UnaryOp, Val, Val),
+    Binary(BinaryOp, Val, Val, Val),
 }
 
 #[derive(Debug, Clone)]
 pub enum Val {
     Int(i32),
     Var(String),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
 }
 
 #[derive(Debug)]

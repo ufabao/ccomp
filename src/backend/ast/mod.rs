@@ -27,6 +27,7 @@ pub struct Declaration {
 pub enum Statement {
   Expression(Expression),
   Return(Expression),
+  If(Expression, Box<Statement>, Option<Box<Statement>>),
   Null,
 }
 
@@ -37,6 +38,7 @@ pub enum Expression {
   Unary(UnaryOp, Box<Expression>),
   Binary(BinaryOp, Box<Expression>, Box<Expression>),
   Assignment(Box<Expression>, Box<Expression>),
+  Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
 }
 
 #[derive(Debug, Clone, Copy)]

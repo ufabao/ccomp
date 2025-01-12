@@ -120,6 +120,14 @@ impl Visitor for NameResolver {
     match stmt {
       Statement::Expression(expression) => Statement::Expression(self.visit_expression(expression)),
       Statement::Return(expression) => Statement::Return(self.visit_expression(expression)),
+      Statement::If(exp, stmt1, stmt2) => Statement::If(
+        self.visit_expression(exp),
+        Box::new(self.visit_statement(stmt1)),
+        match stmt2 {
+          Some(stmt) => Some(Box::new(self.visit_statement(stmt))),
+          None => None,
+        },
+      ),
       Statement::Null => Statement::Null,
     }
   }
@@ -151,6 +159,11 @@ impl Visitor for NameResolver {
           panic!("Left hand side of assignment must be a variable");
         }
       }
+      Expression::Conditional(exp1, exp2, exp3) => Expression::Conditional(
+        Box::new(self.visit_expression(exp1)),
+        Box::new(self.visit_expression(exp2)),
+        Box::new(self.visit_expression(exp3)),
+      ),
     }
   }
 }

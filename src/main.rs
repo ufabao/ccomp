@@ -119,4 +119,14 @@ mod tests {
   fn test_decs_and_defs() {
     test_file_returns_value("test_programs/decs_and_defs.c", 22);
   }
+
+  #[test]
+  fn test_if_else() {
+    test_file_returns_value("test_programs/if_else.c", 0);
+  }
+
+  #[test]
+  fn test_if() {
+    test_file_returns_value("test_programs/conditional.c", 10);
+  }
 }

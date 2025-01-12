@@ -36,8 +36,14 @@ Declaration: Declaration = {
 }
 
 Statement: Statement = {
+    #[precedence(level="0")]
     "return" <e: Exp> ";" => Statement::Return(e),
     <e: Exp> ";" => Statement::Expression(e),
+    #[precedence(level="5")]
+    "if" "(" <e1 : Exp> ")" <s1 : Statement> "else" <s2 : Statement> => Statement::If(e1, Box::new(s1), Some(Box::new(s2))),
+    #[precedence(level="10")]
+    "if" "(" <e1 : Exp> ")" <s : Statement> => Statement::If(e1, Box::new(s), None),
+    #[precedence(level="20")]
     ";" => Statement::Null,
 };
 
@@ -45,9 +51,13 @@ Exp: Expression = {
     #[precedence(level="0")]
     Factor,
 
-    #[precedence(level="100")]
+    #[precedence(level="110")]
     #[assoc(side="right")]
     <e1: Exp> "=" <e2: Exp> => Expression::Assignment(Box::new(e1), Box::new(e2)),
+
+    #[precedence(level="100")]
+    #[assoc(side="right")]
+    <e1 : Exp> "?" <e2 : Exp> ":" <e3 : Exp> => Expression::Conditional(Box::new(e1), Box::new(e2), Box::new(e3)),
     
     #[precedence(level="95")]
     #[assoc(side="left")]

@@ -92,6 +92,45 @@ impl AstToTacTransformer {
       ast::Statement::Expression(expression) => {
         self.transform_expression(expression);
       }
+      ast::Statement::If(expression, statement1, statement2) => {
+        if let Some(else_statement) = statement2 {
+          let cond = self.transform_expression(expression);
+          let temp = self.builder.new_temp();
+          self
+            .builder
+            .add_instruction(Instruction::Copy(cond, temp.clone()));
+          let false_label = self.builder.new_label("if_false");
+          self
+            .builder
+            .add_instruction(Instruction::JumpIfZero(temp, false_label.clone()));
+          self.transform_statement(statement1);
+          let end_label = self.builder.new_label("end_");
+          self
+            .builder
+            .add_instruction(Instruction::Jump(end_label.clone()));
+          self
+            .builder
+            .add_instruction(Instruction::Label(false_label.clone()));
+          self.transform_statement(else_statement);
+          self
+            .builder
+            .add_instruction(Instruction::Label(end_label.clone()));
+        } else {
+          let cond = self.transform_expression(expression);
+          let temp = self.builder.new_temp();
+          self
+            .builder
+            .add_instruction(Instruction::Copy(cond, temp.clone()));
+          let false_label = self.builder.new_label("if_false");
+          self
+            .builder
+            .add_instruction(Instruction::JumpIfZero(temp, false_label.clone()));
+          self.transform_statement(statement1);
+          self
+            .builder
+            .add_instruction(Instruction::Label(false_label.clone()));
+        }
+      }
       ast::Statement::Null => {}
     }
   }
@@ -116,6 +155,7 @@ impl AstToTacTransformer {
         ));
         result
       }
+      ast::Expression::Conditional(_, _, _) => todo!(),
     }
   }
 

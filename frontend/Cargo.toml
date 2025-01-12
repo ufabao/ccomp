@@ -1,0 +1,15 @@
+[package]
+name = "frontend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lalrpop-util = { version = "0.21.0", features = ["lexer"] }
+tempfile = "3.2"
+
+[build-dependencies]
+lalrpop = "0.22.0"
+
+[[bin]]
+name = "ccomp-frontend"
+path = "src/main.rs"

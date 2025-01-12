@@ -1,9 +1,21 @@
 use super::*;
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
+enum Linkage {
+  External,
+  Internal,
+}
+
+#[derive(Debug, Clone)]
+struct IdentifierInfo {
+  name: String,
+  linkage: Linkage,
+}
+
 #[derive(Default)]
 pub struct NameResolver {
-  scopes: Vec<HashMap<String, String>>,
+  identifier_maps: Vec<HashMap<String, IdentifierInfo>>,
   errors: Vec<String>,
   var_count: usize,
 }
@@ -11,39 +23,46 @@ pub struct NameResolver {
 impl NameResolver {
   pub fn new() -> Self {
     Self {
-      scopes: vec![HashMap::new()],
+      identifier_maps: vec![HashMap::new()],
       errors: Vec::new(),
       var_count: 0,
     }
   }
 
   fn begin_scope(&mut self) {
-    self.scopes.push(HashMap::new());
+    self.identifier_maps.push(HashMap::new());
   }
 
   fn end_scope(&mut self) {
-    self.scopes.pop();
-    if self.scopes.len() == 0 {
+    self.identifier_maps.pop();
+    if self.identifier_maps.len() == 0 {
       panic!("Popped too many scopes");
     }
   }
 
-  fn declare_variable(&mut self, name: &str) {
-    if self.scopes.last().unwrap().contains_key(name) {
+  fn declare_variable(&mut self, name: &str, linkage: Linkage) {
+    if self.identifier_maps.last().unwrap().contains_key(name) {
       self
         .errors
         .push(format!("Variable '{}' declared twice", name));
     } else {
-      self.scopes.last_mut().unwrap().insert(
+      let new_name = match linkage {
+        Linkage::External => name.to_string(),
+        Linkage::Internal => "user_var".to_string() + &self.var_count.to_string(),
+      };
+      self.identifier_maps.last_mut().unwrap().insert(
         name.to_string(),
-        "user_var".to_string() + &self.var_count.to_string(),
+        IdentifierInfo {
+          name: new_name,
+          linkage: linkage,
+        },
       );
       self.var_count += 1;
     }
   }
 
-  fn resolve_variable(&mut self, name: &str) -> Option<String> {
-    for scope in self.scopes.iter().rev() {
+  fn resolve_variable(&mut self, name: &str) -> Option<IdentifierInfo> {
+    for scope in self.identifier_maps.iter().rev() {
       if let Some(resolved_name) = scope.get(name) {
         return Some(resolved_name.clone());
       }
@@ -54,7 +73,8 @@ impl NameResolver {
 
 impl Visitor for NameResolver {
   type Program = Program;
-  type Function = Function;
+  type FunctionDecl = FunctionDecl;
+  type VariableDecl = VariableDecl;
   type BlockItem = BlockItem;
   type Declaration = Declaration;
   type Statement = Statement;
@@ -63,24 +83,50 @@ impl Visitor for NameResolver {
 
   fn visit_program(&mut self, program: &Program) -> Self::Program {
     match program {
-      Program::Func(function) => Program::Func(self.visit_function(function)),
+      Program::Program(functions) => {
+        let funcs = functions
+          .iter()
+          .map(|f| self.visit_function_decl(f))
+          .collect();
+        Program::Program(funcs)
+      }
     }
   }
 
-  fn visit_function(&mut self, function: &Function) -> Self::Function {
+  fn visit_function_decl(&mut self, function: &FunctionDecl) -> Self::FunctionDecl {
+    self.declare_variable(&function.name, Linkage::External);
+    let new_name = self.resolve_variable(&function.name).unwrap().name;
     self.begin_scope();
-    let func = Function {
-      name: function.name.clone(),
-      body: function
-        .body
-        .items
-        .iter()
-        .map(|bi| self.visit_block_item(bi))
-        .collect(),
+    for param in &function.params {
+      self.declare_variable(param, Linkage::Internal);
+    }
+    let new_params: Vec<String> = function
+      .params
+      .iter()
+      .map(|param| self.resolve_variable(param).unwrap().name.clone())
+      .collect();
+    let new_body = match &function.body {
+      Some(block) => {
+        self.begin_scope();
+        let new_block = Some(Block {
+          items: block
+            .items
+            .iter()
+            .map(|bi| self.visit_block_item(bi))
+            .collect(),
+        });
+        self.end_scope();
+        new_block
+      }
+      None => None,
     };
     self.end_scope();
 
-    func
+    FunctionDecl {
+      name: new_name,
+      params: new_params,
+      body: new_body,
+    }
   }
 
   fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::BlockItem {
@@ -91,16 +137,20 @@ impl Visitor for NameResolver {
   }
 
   fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Declaration {
-    self.declare_variable(&declaration.name);
-    Declaration {
-      name: self.resolve_variable(&declaration.name).unwrap().clone(),
-      exp: {
-        if let Some(exp) = &declaration.exp {
-          Some(self.visit_expression(exp))
-        } else {
-          None
-        }
-      },
+    match declaration {
+      Declaration::FuncDeclaration(func) => {
+        Declaration::FuncDeclaration(self.visit_function_decl(func))
+      }
+      Declaration::VarDeclaration(var) => {
+        self.declare_variable(&var.name, Linkage::Internal);
+        Declaration::VarDeclaration(VariableDecl {
+          name: self.resolve_variable(&var.name).unwrap().name,
+          value: match &var.value {
+            Some(exp) => Some(self.visit_expression(exp)),
+            None => None,
+          },
+        })
+      }
     }
   }
 
@@ -159,7 +209,6 @@ impl Visitor for NameResolver {
 
   fn visit_for_init(&mut self, init: &ForInit) -> Self::ForInit {
     match init {
-      ForInit::Declaration(decl) => ForInit::Declaration(self.visit_declaration(decl)),
       ForInit::Expression(exp) => {
         if let Some(exp) = exp {
           ForInit::Expression(Some(self.visit_expression(exp)))
@@ -167,6 +216,7 @@ impl Visitor for NameResolver {
           ForInit::Expression(None)
         }
       }
+      ForInit::Declaration(decl) => ForInit::Declaration(self.visit_variable_decl(decl)),
     }
   }
 
@@ -176,7 +226,7 @@ impl Visitor for NameResolver {
       Expression::Var(name) => {
         let resolved_name = self.resolve_variable(name);
         if let Some(resolved_name) = resolved_name {
-          Expression::Var(resolved_name)
+          Expression::Var(resolved_name.name)
         } else {
           panic!("Variable '{}' used before declared", name);
         }
@@ -202,6 +252,28 @@ impl Visitor for NameResolver {
         Box::new(self.visit_expression(exp2)),
         Box::new(self.visit_expression(exp3)),
       ),
+      Expression::FunctionCall(name, vec) => {
+        let resolved_name = self.resolve_variable(name);
+        if let Some(resolved_name) = resolved_name {
+          Expression::FunctionCall(
+            resolved_name.name,
+            vec.iter().map(|exp| self.visit_expression(exp)).collect(),
+          )
+        } else {
+          panic!("Function '{}' used before declared", name);
+        }
+      }
+    }
+  }
+
+  fn visit_variable_decl(&mut self, variable: &VariableDecl) -> Self::VariableDecl {
+    self.declare_variable(&variable.name, Linkage::Internal);
+    VariableDecl {
+      name: self.resolve_variable(&variable.name).unwrap().name,
+      value: match &variable.value {
+        Some(exp) => Some(self.visit_expression(exp)),
+        None => None,
+      },
     }
   }
 }

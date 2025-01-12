@@ -1,21 +1,60 @@
+use crate::ast::{
+    BinaryOp,
+    Block, 
+    BlockItem,
+    Declaration,
+    Expression,
+    ForInit,
+    FunctionDecl,
+    Program,
+    Statement,
+    UnaryOp,
+    VariableDecl,
+};
 use std::str::FromStr;
-use crate::backend::ast::{Function, Block, BlockItem, Declaration, ForInit, Program, Statement, Expression, BinaryOp, UnaryOp};
 
 grammar;
 
 pub Program: Program = {
-    <f: Func> => Program::Func(f)
+    <f: FunctionDeclaration+> => Program::Program(f),
 };
+
+Declaration: Declaration = {
+  <v : VariableDeclaration> => Declaration::VarDeclaration(v),
+  <f : FunctionDeclaration> => Declaration::FuncDeclaration(f),
+}
+
+VariableDeclaration : VariableDecl = {
+  "int" <name : ID> "=" <e : Exp?> ";" => VariableDecl { name: name, value: e},
+}
+
+FunctionDeclaration : FunctionDecl = {
+  "int" <name : ID> "(" <params : ParamList> ")" <body : Block> => FunctionDecl{ name, params, body: Some(body)},
+  "int" <name : ID> "(" <params: ParamList> ")" ";" => FunctionDecl{name, params, body: None },
+}
+
+ParamList : Vec<String> = {
+  "void" => Vec::new(),
+  "int" <name : ID> => vec![name],
+  <mut pl : ParamList> "," "int" <name : ID> => {
+    pl.push(name);
+    pl
+  },
+}
+
+ArgList : Vec<Expression> = {
+  "void" => Vec::new(),
+  <e : Exp> => vec![e],
+  <mut arglist : ArgList> "," <e: Exp> => {
+    arglist.push(e);
+    arglist
+  },
+}
 
 ID: String = {
     <s:r"[a-zA-Z][a-zA-Z0-9]*"> => s.to_owned(),
 }
 
-Func: Function = {
-    "int" <id: ID> "(" "void" ")" <b: Block> => {
-        Function{name: id, body: b}
-    }
-};
 
 Block: Block = {
   "{" <b : BlockItems> "}" => Block{ items: b },
@@ -34,10 +73,11 @@ BlockItem: BlockItem = {
   <d: Declaration> => BlockItem::Declaration(<>),
 }
 
-Declaration: Declaration = {
-  "int" <name: ID> ";" => Declaration{ name: name, exp: None },
-  "int" <name: ID> "=" <e : Exp> ";" => Declaration { name: name, exp: Some(e) },
+ForInit: ForInit = {
+  <v : VariableDeclaration> => ForInit::Declaration(v),
+  //<e: Exp?> => ForInit::Expression(e),
 }
+
 
 Statement: Statement = {
     #[precedence(level="0")]
@@ -57,11 +97,6 @@ Statement: Statement = {
     ";" => Statement::Null,
 };
 
-ForInit: ForInit = {
-  "int" <name: ID> "=" <e: Exp> ";" => ForInit::Declaration(Declaration { name, exp: Some(e) }),
-  "int" <name: ID> ";" => ForInit::Declaration(Declaration { name, exp: None }),
-  //<e: Exp?> => ForInit::Expression(e),
-}
 
 Exp: Expression = {
     #[precedence(level="0")]
@@ -114,4 +149,5 @@ Factor: Expression = {
     "~" <e: Factor> => Expression::Unary(UnaryOp::Complement, Box::new(e)),
     "!" <e: Factor> => Expression::Unary(UnaryOp::Not, Box::new(e)),
     "(" <e: Exp> ")" => e,
+    <name: ID> "(" <args: ArgList> ")" => Expression::FunctionCall(name, args),
 };

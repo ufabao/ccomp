@@ -58,7 +58,8 @@ impl TacVisitor {
 
 impl Visitor for TacVisitor {
   type Program = Program;
-  type Function = Vec<Instruction>;
+  type FunctionDecl = Vec<Instruction>;
+  type VariableDecl = ();
   type BlockItem = ();
   type Declaration = ();
   type Statement = ();
@@ -67,7 +68,7 @@ impl Visitor for TacVisitor {
 
   fn visit_program(&mut self, program: &ast::Program) -> Self::Program {
     match program {
-      ast::Program::Func(func) => {
+      ast::Program::Program(functions) => {
         let instructions = self.visit_function(func);
         Program::Func(Function {
           name: func.name.clone(),

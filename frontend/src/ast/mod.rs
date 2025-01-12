@@ -1,9 +1,10 @@
-pub mod looplabeling;
+//pub mod looplabeling;
 pub mod nameresolution;
 
 pub trait Visitor {
   type Program;
-  type Function;
+  type FunctionDecl;
+  type VariableDecl;
   type BlockItem;
   type Declaration;
   type Statement;
@@ -11,7 +12,8 @@ pub trait Visitor {
   type Expression;
 
   fn visit_program(&mut self, program: &Program) -> Self::Program;
-  fn visit_function(&mut self, function: &Function) -> Self::Function;
+  fn visit_function_decl(&mut self, function: &FunctionDecl) -> Self::FunctionDecl;
+  fn visit_variable_decl(&mut self, variable: &VariableDecl) -> Self::VariableDecl;
   fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::BlockItem;
   fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Declaration;
   fn visit_statement(&mut self, statement: &Statement) -> Self::Statement;
@@ -31,13 +33,26 @@ impl Accept for Program {
 
 #[derive(Debug)]
 pub enum Program {
-  Func(Function),
+  Program(Vec<FunctionDecl>),
 }
 
 #[derive(Debug)]
-pub struct Function {
+pub enum Declaration {
+  FuncDeclaration(FunctionDecl),
+  VarDeclaration(VariableDecl),
+}
+
+#[derive(Debug)]
+pub struct FunctionDecl {
   pub name: String,
-  pub body: Block,
+  pub params: Vec<String>,
+  pub body: Option<Block>,
+}
+
+#[derive(Debug)]
+pub struct VariableDecl {
+  pub name: String,
+  pub value: Option<Expression>,
 }
 
 #[derive(Debug)]
@@ -49,12 +64,6 @@ pub struct Block {
 pub enum BlockItem {
   Statement(Statement),
   Declaration(Declaration),
-}
-
-#[derive(Debug, Clone)]
-pub struct Declaration {
-  pub name: String,
-  pub exp: Option<Expression>,
 }
 
 #[derive(Debug)]
@@ -78,7 +87,7 @@ pub enum Statement {
 
 #[derive(Debug)]
 pub enum ForInit {
-  Declaration(Declaration),
+  Declaration(VariableDecl),
   Expression(Option<Expression>),
 }
 
@@ -90,6 +99,7 @@ pub enum Expression {
   Binary(BinaryOp, Box<Expression>, Box<Expression>),
   Assignment(Box<Expression>, Box<Expression>),
   Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
+  FunctionCall(String, Vec<Expression>),
 }
 
 #[derive(Debug, Clone, Copy)]

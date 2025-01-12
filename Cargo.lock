@@ -27,6 +27,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
+name = "backend"
+version = "0.0.0"
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -54,15 +58,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
-]
-
-[[package]]
-name = "ccomp"
-version = "0.1.0"
-dependencies = [
- "lalrpop",
- "lalrpop-util 0.21.0",
- "tempfile",
 ]
 
 [[package]]
@@ -98,6 +93,14 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+]
+
+[[package]]
+name = "driver"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "frontend",
 ]
 
 [[package]]
@@ -142,6 +145,15 @@ name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
+
+[[package]]
+name = "frontend"
+version = "0.1.0"
+dependencies = [
+ "lalrpop",
+ "lalrpop-util 0.21.0",
+ "tempfile",
+]
 
 [[package]]
 name = "generic-array"

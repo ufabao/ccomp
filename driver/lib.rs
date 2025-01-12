@@ -1,6 +1,3 @@
-pub mod backend;
-pub mod frontend;
-
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;

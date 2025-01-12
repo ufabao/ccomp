@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use crate::backend::ast::{Function, BlockItem, Declaration, Program, Statement, Expression, BinaryOp, UnaryOp};
+use crate::backend::ast::{Function, Block,BlockItem, Declaration, Program, Statement, Expression, BinaryOp, UnaryOp};
 
 grammar;
 
@@ -12,10 +12,14 @@ ID: String = {
 }
 
 Func: Function = {
-    "int" <id: ID> "(" "void" ")" "{" <b: BlockItems> "}" => {
+    "int" <id: ID> "(" "void" ")" <b: Block> => {
         Function{name: id, body: b}
     }
 };
+
+Block: Block = {
+  "{" <b : BlockItems> "}" => Block{ items: b },
+}
 
 BlockItems: Vec<BlockItem> = {
   <b: BlockItem> => vec![b],
@@ -39,6 +43,7 @@ Statement: Statement = {
     #[precedence(level="0")]
     "return" <e: Exp> ";" => Statement::Return(e),
     <e: Exp> ";" => Statement::Expression(e),
+    <b: Block> => Statement::Compound(b),
     #[precedence(level="5")]
     "if" "(" <e1 : Exp> ")" <s1 : Statement> "else" <s2 : Statement> => Statement::If(e1, Box::new(s1), Some(Box::new(s2))),
     #[precedence(level="10")]

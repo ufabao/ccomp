@@ -8,7 +8,12 @@ pub enum Program {
 #[derive(Debug)]
 pub struct Function {
   pub name: String,
-  pub body: Vec<BlockItem>,
+  pub body: Block,
+}
+
+#[derive(Debug)]
+pub struct Block {
+  pub items: Vec<BlockItem>,
 }
 
 #[derive(Debug)]
@@ -28,6 +33,7 @@ pub enum Statement {
   Expression(Expression),
   Return(Expression),
   If(Expression, Box<Statement>, Option<Box<Statement>>),
+  Compound(Block),
   Null,
 }
 
@@ -64,4 +70,12 @@ pub enum BinaryOp {
   LessOrEqual,
   GreaterThan,
   GreaterOrEqual,
+}
+
+impl FromIterator<BlockItem> for Block {
+  fn from_iter<I: IntoIterator<Item = BlockItem>>(iter: I) -> Self {
+    Block {
+      items: iter.into_iter().collect(),
+    }
+  }
 }

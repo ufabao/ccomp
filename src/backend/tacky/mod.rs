@@ -67,10 +67,14 @@ impl AstToTacTransformer {
   }
 
   fn transform_function(&mut self, func: &ast::Function) -> Vec<Instruction> {
-    func.body.iter().for_each(|block_item| match block_item {
-      ast::BlockItem::Statement(stmt) => self.transform_statement(stmt),
-      ast::BlockItem::Declaration(decl) => self.transform_declaration(decl),
-    });
+    func
+      .body
+      .items
+      .iter()
+      .for_each(|block_item| match block_item {
+        ast::BlockItem::Statement(stmt) => self.transform_statement(stmt),
+        ast::BlockItem::Declaration(decl) => self.transform_declaration(decl),
+      });
     mem::take(&mut self.builder).build()
   }
 
@@ -130,6 +134,12 @@ impl AstToTacTransformer {
             .builder
             .add_instruction(Instruction::Label(false_label.clone()));
         }
+      }
+      ast::Statement::Compound(block) => {
+        block.items.iter().for_each(|block_item| match block_item {
+          ast::BlockItem::Statement(stmt) => self.transform_statement(stmt),
+          ast::BlockItem::Declaration(decl) => self.transform_declaration(decl),
+        });
       }
       ast::Statement::Null => {}
     }

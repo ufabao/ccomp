@@ -1,6 +1,9 @@
-int main(void) {
-  if (0) 
-    return 1;
-  else 
-    return 0;
+int main(void) 
+{
+    int a = 1;
+    {
+      int b = 2;
+      a = b;
+    }
+  return a;
 }

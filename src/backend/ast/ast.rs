@@ -29,7 +29,7 @@ impl Accept for Program {
 
 #[derive(Default)]
 pub struct NameResolver {
-  scopes: HashMap<String, String>,
+  scopes: Vec<HashMap<String, String>>,
   errors: Vec<String>,
   var_count: usize,
 }
@@ -37,19 +37,30 @@ pub struct NameResolver {
 impl NameResolver {
   pub fn new() -> Self {
     Self {
-      scopes: HashMap::new(),
+      scopes: vec![HashMap::new()],
       errors: Vec::new(),
       var_count: 0,
     }
   }
 
+  fn begin_scope(&mut self) {
+    self.scopes.push(HashMap::new());
+  }
+
+  fn end_scope(&mut self) {
+    self.scopes.pop();
+    if self.scopes.len() == 0 {
+      panic!("Popped too many scopes");
+    }
+  }
+
   fn declare_variable(&mut self, name: &str) {
-    if self.scopes.contains_key(name) {
+    if self.scopes.last().unwrap().contains_key(name) {
       self
         .errors
         .push(format!("Variable '{}' declared twice", name));
     } else {
-      self.scopes.insert(
+      self.scopes.last_mut().unwrap().insert(
         name.to_string(),
         "user_var".to_string() + &self.var_count.to_string(),
       );
@@ -58,15 +69,12 @@ impl NameResolver {
   }
 
   fn resolve_variable(&mut self, name: &str) -> Option<String> {
-    match self.scopes.get(name) {
-      Some(resolved_name) => Some(resolved_name.clone()),
-      None => {
-        self
-          .errors
-          .push(format!("Variable '{}' used before declared", name));
-        None
+    for scope in self.scopes.iter().rev() {
+      if let Some(resolved_name) = scope.get(name) {
+        return Some(resolved_name.clone());
       }
     }
+    None
   }
 }
 
@@ -85,14 +93,19 @@ impl Visitor for NameResolver {
   }
 
   fn visit_function(&mut self, function: &Function) -> Self::Function {
-    Function {
+    self.begin_scope();
+    let func = Function {
       name: function.name.clone(),
       body: function
         .body
+        .items
         .iter()
         .map(|bi| self.visit_block_item(bi))
         .collect(),
-    }
+    };
+    self.end_scope();
+
+    func
   }
 
   fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::BlockItem {
@@ -128,6 +141,18 @@ impl Visitor for NameResolver {
           None => None,
         },
       ),
+      Statement::Compound(block) => {
+        self.begin_scope();
+        let stmt = Statement::Compound(Block {
+          items: block
+            .items
+            .iter()
+            .map(|bi| self.visit_block_item(bi))
+            .collect(),
+        });
+        self.end_scope();
+        stmt
+      }
       Statement::Null => Statement::Null,
     }
   }

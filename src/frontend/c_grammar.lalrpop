@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use crate::backend::ast::ast::{Function, Program, Statement, Expression, BinaryOp, UnaryOp};
+use crate::backend::ast::{Function, BlockItem, Declaration, Program, Statement, Expression, BinaryOp, UnaryOp};
 
 grammar;
 
@@ -12,38 +12,62 @@ ID: String = {
 }
 
 Func: Function = {
-    "int" <id: ID> "(" "void" ")" "{" <s: Statement> "}" => {
-        Function{name: id, body: s}
+    "int" <id: ID> "(" "void" ")" "{" <b: BlockItems> "}" => {
+        Function{name: id, body: b}
     }
 };
 
+BlockItems: Vec<BlockItem> = {
+  <b: BlockItem> => vec![b],
+  <mut v: BlockItems> <b: BlockItem> => {
+    v.push(b);
+    v
+  }
+}
+
+BlockItem: BlockItem = {
+  <s: Statement> => BlockItem::Statement(<>),
+  <d: Declaration> => BlockItem::Declaration(<>),
+}
+
+Declaration: Declaration = {
+  "int" <name: ID> ";" => Declaration{ name: name, exp: None },
+  "int" <name: ID> "=" <e : Exp> ";" => Declaration { name: name, exp: Some(e) },
+}
+
 Statement: Statement = {
     "return" <e: Exp> ";" => Statement::Return(e),
+    <e: Exp> ";" => Statement::Expression(e),
+    ";" => Statement::Null,
 };
 
 Exp: Expression = {
     #[precedence(level="0")]
     Factor,
+
+    #[precedence(level="100")]
+    #[assoc(side="right")]
+    <e1: Exp> "=" <e2: Exp> => Expression::Assignment(Box::new(e1), Box::new(e2)),
     
     #[precedence(level="95")]
     #[assoc(side="left")]
-    <e1:Exp> "||" <e2:Exp> => Expression::Binary(BinaryOp::Or, Box::new(e1), Box::new(e2)),
+    <e1: Exp> "||" <e2:Exp> => Expression::Binary(BinaryOp::Or, Box::new(e1), Box::new(e2)),
     
     #[precedence(level="90")]
     #[assoc(side="left")]
-    <e1:Exp> "&&" <e2:Exp> => Expression::Binary(BinaryOp::And, Box::new(e1), Box::new(e2)),
+    <e1: Exp> "&&" <e2:Exp> => Expression::Binary(BinaryOp::And, Box::new(e1), Box::new(e2)),
     
     #[precedence(level="70")]
     #[assoc(side="left")]
-    <e1:Exp> "==" <e2:Exp> => Expression::Binary(BinaryOp::Equal, Box::new(e1), Box::new(e2)),
-    <e1:Exp> "!=" <e2:Exp> => Expression::Binary(BinaryOp::NotEqual, Box::new(e1), Box::new(e2)),
+    <e1: Exp> "==" <e2:Exp> => Expression::Binary(BinaryOp::Equal, Box::new(e1), Box::new(e2)),
+    <e1: Exp> "!=" <e2:Exp> => Expression::Binary(BinaryOp::NotEqual, Box::new(e1), Box::new(e2)),
     
     #[precedence(level="65")]
     #[assoc(side="left")]
-    <e1:Exp> "<" <e2:Exp> => Expression::Binary(BinaryOp::LessThan, Box::new(e1), Box::new(e2)),
-    <e1:Exp> "<=" <e2:Exp> => Expression::Binary(BinaryOp::LessOrEqual, Box::new(e1), Box::new(e2)),
-    <e1:Exp> ">" <e2:Exp> => Expression::Binary(BinaryOp::GreaterThan, Box::new(e1), Box::new(e2)),
-    <e1:Exp> ">=" <e2:Exp> => Expression::Binary(BinaryOp::GreaterOrEqual, Box::new(e1), Box::new(e2)),
+    <e1: Exp> "<" <e2:Exp> => Expression::Binary(BinaryOp::LessThan, Box::new(e1), Box::new(e2)),
+    <e1: Exp> "<=" <e2:Exp> => Expression::Binary(BinaryOp::LessOrEqual, Box::new(e1), Box::new(e2)),
+    <e1: Exp> ">" <e2:Exp> => Expression::Binary(BinaryOp::GreaterThan, Box::new(e1), Box::new(e2)),
+    <e1: Exp> ">=" <e2:Exp> => Expression::Binary(BinaryOp::GreaterOrEqual, Box::new(e1), Box::new(e2)),
     
     #[precedence(level="55")]
     #[assoc(side="left")]
@@ -59,8 +83,9 @@ Exp: Expression = {
 
 Factor: Expression = {
     r"[0-9]+" => Expression::Int(i32::from_str(<>).unwrap()),
-    "-" <e:Factor> => Expression::Unary(UnaryOp::Neg, Box::new(e)),
-    "~" <e:Factor> => Expression::Unary(UnaryOp::Complement, Box::new(e)),
-    "!" <e:Factor> => Expression::Unary(UnaryOp::Not, Box::new(e)),
-    "(" <e:Exp> ")" => e,
+    <name: ID> => Expression::Var(name),
+    "-" <e: Factor> => Expression::Unary(UnaryOp::Neg, Box::new(e)),
+    "~" <e: Factor> => Expression::Unary(UnaryOp::Complement, Box::new(e)),
+    "!" <e: Factor> => Expression::Unary(UnaryOp::Not, Box::new(e)),
+    "(" <e: Exp> ")" => e,
 };

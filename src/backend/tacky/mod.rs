@@ -1,12 +1,13 @@
 pub mod tacky;
+use super::ast;
 use std::mem;
 use tacky::{BinaryOp, Function, Instruction, Program, UnaryOp, Val};
-
-use super::ast::ast;
 
 #[derive(Debug, Default)]
 struct TacBuilder {
   instructions: Vec<Instruction>,
+  // this keeps track of the number of temporary variables created, as a very rudimentary
+  // way of knowing the stack size needed for the function
   temp_counter: usize,
   label_counter: usize,
 }
@@ -66,8 +67,20 @@ impl AstToTacTransformer {
   }
 
   fn transform_function(&mut self, func: &ast::Function) -> Vec<Instruction> {
-    self.transform_statement(&func.body);
+    func.body.iter().for_each(|block_item| match block_item {
+      ast::BlockItem::Statement(stmt) => self.transform_statement(stmt),
+      ast::BlockItem::Declaration(decl) => self.transform_declaration(decl),
+    });
     mem::take(&mut self.builder).build()
+  }
+
+  fn transform_declaration(&mut self, decl: &ast::Declaration) {
+    if let Some(exp) = &decl.exp {
+      let val = self.transform_expression(exp);
+      self
+        .builder
+        .add_instruction(Instruction::Copy(val, Val::Var(decl.name.clone())));
+    }
   }
 
   fn transform_statement(&mut self, stmt: &ast::Statement) {
@@ -76,6 +89,10 @@ impl AstToTacTransformer {
         let val = self.transform_expression(expression);
         self.builder.add_instruction(Instruction::Return(val));
       }
+      ast::Statement::Expression(expression) => {
+        self.transform_expression(expression);
+      }
+      ast::Statement::Null => {}
     }
   }
 
@@ -85,6 +102,19 @@ impl AstToTacTransformer {
       ast::Expression::Unary(op, expression) => self.transform_unary_op(*op, expression),
       ast::Expression::Binary(binary_op, expression1, expression2) => {
         self.transform_binary_op(*binary_op, expression1, expression2)
+      }
+      ast::Expression::Var(name) => Val::Var(name.clone()),
+      ast::Expression::Assignment(lhs, rhs) => {
+        let var_name = match &**lhs {
+          ast::Expression::Var(name) => name,
+          _ => unreachable!(),
+        };
+        let result = self.transform_expression(rhs);
+        self.builder.add_instruction(Instruction::Copy(
+          result.to_owned(),
+          Val::Var(var_name.clone()),
+        ));
+        result
       }
     }
   }

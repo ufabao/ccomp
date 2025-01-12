@@ -1,9 +1,14 @@
-use ccomp::backend::asm::assemblyast;
-use ccomp::backend::asm::codegen::generate_assembly;
-use ccomp::backend::asm::tacky_to_asm_ast;
-use ccomp::backend::tacky::ToTac;
-use ccomp::frontend::c_grammar;
 use std::fs;
+
+use ccomp::{
+  backend::{
+    asm::{assemblyast, codegen::generate_assembly, tacky_to_asm_ast},
+    ast::ast::{Accept, NameResolver},
+    tacky::ToTac,
+  },
+  compile_and_run,
+  frontend::c_grammar,
+};
 
 pub fn driver(path: &str) -> Result<String, String> {
   let input = match fs::read_to_string(path) {
@@ -18,7 +23,9 @@ pub fn driver(path: &str) -> Result<String, String> {
     }
   };
   //dbg!(&prog);
-  let tac = prog.to_tac();
+  let name_resolved_asm = prog.accept(&mut NameResolver::new());
+  //dbg!(&name_resolved_asm);
+  let tac = name_resolved_asm.to_tac();
   //dbg!(&tac);
   let asm = tacky_to_asm_ast(&tac);
   //dbg!(&asm);
@@ -34,38 +41,20 @@ pub fn driver(path: &str) -> Result<String, String> {
 }
 
 fn main() {
-  let code = driver("test_programs/not_greater_than.c");
-  println!("{}", code.unwrap());
+  let code = driver("blah.c").unwrap_or_else(|e| {
+    println!("{}", e);
+    std::process::exit(1);
+  });
+
+  println!("Assembly code generated: \n{}", code);
+  let return_value = compile_and_run(&code);
+  println!("Value returned by function: \n{:?}", return_value);
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use std::fs;
-  use std::process::Command;
-  use tempfile::tempdir;
-
-  fn compile_and_run(assembly: &str) -> Result<i32, Box<dyn std::error::Error>> {
-    let temp_dir = tempdir()?;
-    let asm_path = temp_dir.path().join("test.s");
-    let exe_path = temp_dir.path().join("test");
-
-    fs::write(&asm_path, assembly)?;
-
-    let status = Command::new("gcc")
-      .arg(asm_path.to_str().unwrap())
-      .arg("-o")
-      .arg(exe_path.to_str().unwrap())
-      .status()?;
-
-    if !status.success() {
-      return Err("Compilation failed".into());
-    }
-
-    let output = Command::new(exe_path.to_str().unwrap()).status()?;
-
-    Ok(output.code().unwrap_or(-1))
-  }
+  use ccomp::compile_and_run;
 
   fn test_file_returns_value(path: &str, expected: i32) {
     let code = driver(path);
@@ -117,12 +106,17 @@ mod tests {
   }
 
   #[test]
-  fn not_greater_than() {
+  fn test_not_greater_than() {
     test_file_returns_value("test_programs/not_greater_than.c", 0);
   }
 
   #[test]
   fn test_greater_or_equal() {
     test_file_returns_value("test_programs/greater_or_equal.c", 1);
+  }
+
+  #[test]
+  fn test_decs_and_defs() {
+    test_file_returns_value("test_programs/decs_and_defs.c", 22);
   }
 }

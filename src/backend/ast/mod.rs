@@ -1,2 +1,65 @@
 pub mod ast;
-pub mod codegen;
+
+#[derive(Debug)]
+pub enum Program {
+  Func(Function),
+}
+
+#[derive(Debug)]
+pub struct Function {
+  pub name: String,
+  pub body: Vec<BlockItem>,
+}
+
+#[derive(Debug)]
+pub enum BlockItem {
+  Statement(Statement),
+  Declaration(Declaration),
+}
+
+#[derive(Debug, Clone)]
+pub struct Declaration {
+  pub name: String,
+  pub exp: Option<Expression>,
+}
+
+#[derive(Debug)]
+pub enum Statement {
+  Expression(Expression),
+  Return(Expression),
+  Null,
+}
+
+#[derive(Debug, Clone)]
+pub enum Expression {
+  Int(i32),
+  Var(String),
+  Unary(UnaryOp, Box<Expression>),
+  Binary(BinaryOp, Box<Expression>, Box<Expression>),
+  Assignment(Box<Expression>, Box<Expression>),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnaryOp {
+  Neg,
+  PrefixDec,
+  Complement,
+  Not,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BinaryOp {
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mod,
+  And,
+  Or,
+  Equal,
+  NotEqual,
+  LessThan,
+  LessOrEqual,
+  GreaterThan,
+  GreaterOrEqual,
+}

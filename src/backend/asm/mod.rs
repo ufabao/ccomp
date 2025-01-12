@@ -86,7 +86,8 @@ fn convert_binary_op(
     tacky::BinaryOp::GreaterThan
     | tacky::BinaryOp::GreaterOrEqual
     | tacky::BinaryOp::LessOrEqual
-    | tacky::BinaryOp::LessThan => {
+    | tacky::BinaryOp::LessThan
+    | tacky::BinaryOp::Equal => {
       instructions.push(Instruction::Cmp(convert_val(val2), convert_val(val1)));
       instructions.push(Instruction::Mov(Operand::Imm(0), convert_val(dst)));
       instructions.push(Instruction::SetCC(
@@ -158,6 +159,7 @@ fn conditional_name_lookup(op: tacky::BinaryOp) -> ConditionalCode {
     tacky::BinaryOp::GreaterOrEqual => ConditionalCode::GE,
     tacky::BinaryOp::LessThan => ConditionalCode::L,
     tacky::BinaryOp::LessOrEqual => ConditionalCode::LE,
+    tacky::BinaryOp::Equal => ConditionalCode::E,
     _ => unreachable!(),
   }
 }

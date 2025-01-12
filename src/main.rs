@@ -3,14 +3,14 @@ use std::fs;
 use ccomp::{
   backend::{
     asm::{assemblyast, codegen::generate_assembly, tacky_to_asm_ast},
-    ast::ast::{Accept, NameResolver},
-    tacky::ToTac,
+    ast::{looplabeling::LoopLabeler, nameresolution::NameResolver, Accept},
+    tacky::TacVisitor,
   },
   compile_and_run,
   frontend::c_grammar,
 };
 
-pub fn driver(path: &str) -> Result<String, String> {
+fn driver(path: &str) -> Result<String, String> {
   let input = match fs::read_to_string(path) {
     Ok(contents) => contents,
     Err(e) => return Err(format!("Error reading file: {}", e)),
@@ -23,9 +23,11 @@ pub fn driver(path: &str) -> Result<String, String> {
     }
   };
   //dbg!(&prog);
-  let name_resolved_asm = prog.accept(&mut NameResolver::new());
+  let name_resolved_ast = prog.accept(&mut NameResolver::new());
   //dbg!(&name_resolved_asm);
-  let tac = name_resolved_asm.to_tac();
+  let loop_labeled_ast = name_resolved_ast.accept(&mut LoopLabeler::new());
+  //dbg!(&loop_labeled_ast);
+  let tac = loop_labeled_ast.accept(&mut TacVisitor::new());
   //dbg!(&tac);
   let asm = tacky_to_asm_ast(&tac);
   //dbg!(&asm);
@@ -128,5 +130,20 @@ mod tests {
   #[test]
   fn test_if() {
     test_file_returns_value("test_programs/conditional.c", 10);
+  }
+
+  #[test]
+  fn test_nested_scopes() {
+    test_file_returns_value("test_programs/nested_scope.c", 2);
+  }
+
+  #[test]
+  fn test_break_statement() {
+    test_file_returns_value("test_programs/break_statement.c", 7);
+  }
+
+  #[test]
+  fn test_continue_statement() {
+    test_file_returns_value("test_programs/nested_continue_statement.c", 10);
   }
 }

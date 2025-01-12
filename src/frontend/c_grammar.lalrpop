@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use crate::backend::ast::{Function, Block,BlockItem, Declaration, Program, Statement, Expression, BinaryOp, UnaryOp};
+use crate::backend::ast::{Function, Block, BlockItem, Declaration, ForInit, Program, Statement, Expression, BinaryOp, UnaryOp};
 
 grammar;
 
@@ -48,9 +48,20 @@ Statement: Statement = {
     "if" "(" <e1 : Exp> ")" <s1 : Statement> "else" <s2 : Statement> => Statement::If(e1, Box::new(s1), Some(Box::new(s2))),
     #[precedence(level="10")]
     "if" "(" <e1 : Exp> ")" <s : Statement> => Statement::If(e1, Box::new(s), None),
+    "while" "(" <e: Exp> ")" <s: Statement> => Statement::While(e, Box::new(s), String::new()),
+    "for" "(" <init: ForInit> <e1: Exp?> ";" <e2 : Exp?> ")" <s: Statement> => Statement::For(init, e1, e2, Box::new(s), String::new()),
+    "break" ";" => Statement::Break(String::new()),
+    "continue" ";" => Statement::Continue(String::new()),
+
     #[precedence(level="20")]
     ";" => Statement::Null,
 };
+
+ForInit: ForInit = {
+  "int" <name: ID> "=" <e: Exp> ";" => ForInit::Declaration(Declaration { name, exp: Some(e) }),
+  "int" <name: ID> ";" => ForInit::Declaration(Declaration { name, exp: None }),
+  //<e: Exp?> => ForInit::Expression(e),
+}
 
 Exp: Expression = {
     #[precedence(level="0")]

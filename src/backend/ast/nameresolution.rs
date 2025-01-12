@@ -1,32 +1,6 @@
 use super::*;
 use std::collections::HashMap;
 
-pub trait Visitor {
-  type Program;
-  type Function;
-  type BlockItem;
-  type Declaration;
-  type Statement;
-  type Expression;
-
-  fn visit_program(&mut self, program: &Program) -> Self::Program;
-  fn visit_function(&mut self, function: &Function) -> Self::Function;
-  fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::BlockItem;
-  fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Declaration;
-  fn visit_statement(&mut self, statement: &Statement) -> Self::Statement;
-  fn visit_expression(&mut self, expression: &Expression) -> Self::Expression;
-}
-
-pub trait Accept {
-  fn accept<V: Visitor>(&self, visitor: &mut V) -> <V as Visitor>::Program;
-}
-
-impl Accept for Program {
-  fn accept<V: Visitor>(&self, visitor: &mut V) -> <V as Visitor>::Program {
-    visitor.visit_program(self)
-  }
-}
-
 #[derive(Default)]
 pub struct NameResolver {
   scopes: Vec<HashMap<String, String>>,
@@ -84,6 +58,7 @@ impl Visitor for NameResolver {
   type BlockItem = BlockItem;
   type Declaration = Declaration;
   type Statement = Statement;
+  type ForInit = ForInit;
   type Expression = Expression;
 
   fn visit_program(&mut self, program: &Program) -> Self::Program {
@@ -153,7 +128,45 @@ impl Visitor for NameResolver {
         self.end_scope();
         stmt
       }
+      Statement::While(exp, statement, label) => Statement::While(
+        self.visit_expression(exp),
+        Box::new(self.visit_statement(statement)),
+        label.clone(),
+      ),
+      Statement::For(init, exp2, exp3, statement, label) => {
+        self.begin_scope();
+        let stmt = Statement::For(
+          self.visit_for_init(init),
+          match exp2 {
+            Some(exp) => Some(self.visit_expression(exp)),
+            None => None,
+          },
+          match exp3 {
+            Some(exp) => Some(self.visit_expression(exp)),
+            None => None,
+          },
+          Box::new(self.visit_statement(statement)),
+          label.clone(),
+        );
+        self.end_scope();
+        stmt
+      }
+      Statement::Continue(label) => Statement::Continue(label.clone()),
+      Statement::Break(label) => Statement::Break(label.clone()),
       Statement::Null => Statement::Null,
+    }
+  }
+
+  fn visit_for_init(&mut self, init: &ForInit) -> Self::ForInit {
+    match init {
+      ForInit::Declaration(decl) => ForInit::Declaration(self.visit_declaration(decl)),
+      ForInit::Expression(exp) => {
+        if let Some(exp) = exp {
+          ForInit::Expression(Some(self.visit_expression(exp)))
+        } else {
+          ForInit::Expression(None)
+        }
+      }
     }
   }
 

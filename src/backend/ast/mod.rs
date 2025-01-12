@@ -1,4 +1,33 @@
-pub mod ast;
+pub mod looplabeling;
+pub mod nameresolution;
+
+pub trait Visitor {
+  type Program;
+  type Function;
+  type BlockItem;
+  type Declaration;
+  type Statement;
+  type ForInit;
+  type Expression;
+
+  fn visit_program(&mut self, program: &Program) -> Self::Program;
+  fn visit_function(&mut self, function: &Function) -> Self::Function;
+  fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::BlockItem;
+  fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Declaration;
+  fn visit_statement(&mut self, statement: &Statement) -> Self::Statement;
+  fn visit_for_init(&mut self, statement: &ForInit) -> Self::ForInit;
+  fn visit_expression(&mut self, expression: &Expression) -> Self::Expression;
+}
+
+pub trait Accept {
+  fn accept<V: Visitor>(&self, visitor: &mut V) -> <V as Visitor>::Program;
+}
+
+impl Accept for Program {
+  fn accept<V: Visitor>(&self, visitor: &mut V) -> <V as Visitor>::Program {
+    visitor.visit_program(self)
+  }
+}
 
 #[derive(Debug)]
 pub enum Program {
@@ -35,6 +64,22 @@ pub enum Statement {
   If(Expression, Box<Statement>, Option<Box<Statement>>),
   Compound(Block),
   Null,
+  Break(String),
+  Continue(String),
+  While(Expression, Box<Statement>, String),
+  For(
+    ForInit,
+    Option<Expression>,
+    Option<Expression>,
+    Box<Statement>,
+    String,
+  ),
+}
+
+#[derive(Debug)]
+pub enum ForInit {
+  Declaration(Declaration),
+  Expression(Option<Expression>),
 }
 
 #[derive(Debug, Clone)]

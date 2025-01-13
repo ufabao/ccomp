@@ -8,7 +8,8 @@ pub struct Program {
 #[derive(Debug, Default)]
 pub struct ASMPasses {
   identifiers: HashMap<String, i32>,
-  variable_count: i32,
+  function_variable_count: HashMap<String, i32>,
+  current_function: String,
 }
 
 impl ASMPasses {
@@ -17,7 +18,9 @@ impl ASMPasses {
 
     for function in &prog.functions {
       let mut replaced_instructions: Vec<Instruction> = Vec::new();
-      replaced_instructions.push(Instruction::AllocateStack(4 * self.variable_count));
+      let stack_size = 4 * self.get_function_variable_count(&function.name);
+      let stack_size = ((stack_size + 15) / 16) * 16;
+      replaced_instructions.push(Instruction::AllocateStack(stack_size));
 
       for instruction in &function.instructions {
         match instruction {
@@ -125,6 +128,7 @@ impl ASMPasses {
     let mut processed_functions = Vec::new();
 
     for function in &prog.functions {
+      self.enter_function(&function.name);
       let mut replaced_instructions: Vec<Instruction> = Vec::new();
 
       for instruction in &function.instructions {
@@ -160,6 +164,9 @@ impl ASMPasses {
               self.replace_operand(operand),
             ));
           }
+          Instruction::Push(operand) => {
+            replaced_instructions.push(Instruction::Push(self.replace_operand(operand)));
+          }
           _ => {
             replaced_instructions.push(instruction.clone());
           }
@@ -185,14 +192,40 @@ impl ASMPasses {
         if self.identifiers.contains_key(pseudo) {
           Operand::Stack(*self.identifiers.get(pseudo).unwrap())
         } else {
-          self.variable_count += 1;
-          let stack_offset = -4 * self.variable_count;
+          self.add_variable_to_function();
+          let stack_offset = -4 * self.get_current_function_variable_count();
           self.identifiers.insert(pseudo.clone(), stack_offset);
           Operand::Stack(stack_offset)
         }
       }
       Operand::Stack(s) => Operand::Stack(*s),
     }
+  }
+
+  fn enter_function(&mut self, function_name: &str) {
+    self.current_function = function_name.to_string();
+    self
+      .function_variable_count
+      .insert(self.current_function.clone(), 0);
+  }
+
+  fn get_function_variable_count(&self, function_name: &str) -> i32 {
+    *self.function_variable_count.get(function_name).unwrap()
+  }
+
+  fn get_current_function_variable_count(&self) -> i32 {
+    *self
+      .function_variable_count
+      .get(&self.current_function)
+      .unwrap()
+  }
+
+  fn add_variable_to_function(&mut self) {
+    let count = self
+      .function_variable_count
+      .get_mut(&self.current_function)
+      .unwrap();
+    *count += 1;
   }
 }
 

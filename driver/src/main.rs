@@ -4,10 +4,10 @@ use driver::compile_and_run;
 use frontend::front_end_passes;
 
 fn driver(path: &str) -> Result<String, String> {
-  let final_ast = front_end_passes(path)?;
-  dbg!(&final_ast);
+  let (final_ast, symbol_table) = front_end_passes(path)?;
+  //dbg!(&final_ast);
 
-  let code = generate_code(&final_ast);
+  let code = generate_code(&final_ast, symbol_table);
   Ok(code)
 }
 
@@ -24,6 +24,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+  use std::io::stdin;
+
   use super::*;
   use driver::compile_and_run;
 
@@ -31,8 +33,22 @@ mod tests {
     let code = driver(path);
     let return_value = compile_and_run(&code.unwrap());
     match return_value {
-      Ok(val) => {
+      Ok((val, _)) => {
         assert_eq!(val, expected);
+      }
+      Err(e) => {
+        println!("{}", e);
+        assert!(false);
+      }
+    }
+  }
+
+  fn test_file_prints_value(path: &str, expected: &str) {
+    let code = driver(path);
+    let return_value = compile_and_run(&code.unwrap());
+    match return_value {
+      Ok((_, function_io)) => {
+        assert_eq!(expected, function_io);
       }
       Err(e) => {
         println!("{}", e);
@@ -114,5 +130,20 @@ mod tests {
   #[test]
   fn test_continue_statement() {
     test_file_returns_value("test_programs/nested_continue_statement.c", 10);
+  }
+
+  #[test]
+  fn test_for_loops() {
+    test_file_returns_value("test_programs/for_loops.c", 11);
+  }
+
+  #[test]
+  fn test_function_call() {
+    test_file_returns_value("test_programs/function_call.c", 6);
+  }
+
+  #[test]
+  fn test_hello_world() {
+    test_file_prints_value("test_programs/hello_world.c", "Hello, World!\n");
   }
 }

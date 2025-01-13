@@ -1,4 +1,5 @@
 use super::*;
+use crate::ast::Accept;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -24,7 +25,7 @@ pub enum TypeError {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum TypeInfo {
+pub enum TypeInfo {
   Int,
   FunType(i32, bool), // param count, already_defined_flag
 }
@@ -34,6 +35,15 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
+  pub fn type_check_program(program: &Program) -> Result<HashMap<String, TypeInfo>, String> {
+    let mut type_checker = TypeChecker::new();
+    let _ = program
+      .accept(&mut type_checker)
+      .map_err(|e| format!("{:?}", e));
+
+    Ok(type_checker.symbol_table)
+  }
+
   pub fn new() -> Self {
     TypeChecker {
       symbol_table: HashMap::new(),

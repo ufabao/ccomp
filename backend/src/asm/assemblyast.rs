@@ -1,0 +1,273 @@
+use std::collections::HashMap;
+
+#[derive(Debug)]
+pub struct Program {
+  pub functions: Vec<FunctionDef>,
+}
+
+#[derive(Debug, Default)]
+pub struct ASMPasses {
+  identifiers: HashMap<String, i32>,
+  variable_count: i32,
+}
+
+impl ASMPasses {
+  pub fn final_pass(&self, prog: &Program) -> Program {
+    let mut processed_functions = Vec::new();
+
+    for function in &prog.functions {
+      let mut replaced_instructions: Vec<Instruction> = Vec::new();
+      replaced_instructions.push(Instruction::AllocateStack(4 * self.variable_count));
+
+      for instruction in &function.instructions {
+        match instruction {
+          Instruction::Mov(src, dst) => match (src, dst) {
+            (Operand::Stack(s), Operand::Stack(d)) => {
+              replaced_instructions.push(Instruction::Mov(
+                Operand::Stack(*s),
+                Operand::Reg(Register::R10),
+              ));
+              replaced_instructions.push(Instruction::Mov(
+                Operand::Reg(Register::R10),
+                Operand::Stack(*d),
+              ));
+            }
+            _ => {
+              replaced_instructions.push(instruction.clone());
+            }
+          },
+          Instruction::Binary(binary_op, operand1, operand2) => {
+            match (binary_op, operand1, operand2) {
+              (BinaryOp::Add | BinaryOp::Sub, Operand::Stack(n1), Operand::Stack(n2)) => {
+                replaced_instructions.push(Instruction::Mov(
+                  Operand::Stack(*n1),
+                  Operand::Reg(Register::R10),
+                ));
+                replaced_instructions.push(Instruction::Binary(
+                  *binary_op,
+                  Operand::Reg(Register::R10),
+                  Operand::Stack(*n2),
+                ));
+              }
+              (BinaryOp::Mul, _, Operand::Stack(n)) => {
+                replaced_instructions.push(Instruction::Mov(
+                  Operand::Stack(*n),
+                  Operand::Reg(Register::R11),
+                ));
+                replaced_instructions.push(Instruction::Binary(
+                  *binary_op,
+                  operand1.clone(),
+                  Operand::Reg(Register::R11),
+                ));
+                replaced_instructions.push(Instruction::Mov(
+                  Operand::Reg(Register::R11),
+                  Operand::Stack(*n),
+                ));
+              }
+              _ => {
+                replaced_instructions.push(instruction.clone());
+              }
+            }
+          }
+          Instruction::IDiv(operand) => match operand {
+            Operand::Imm(n) => {
+              replaced_instructions.push(Instruction::Mov(
+                Operand::Imm(*n),
+                Operand::Reg(Register::R10),
+              ));
+              replaced_instructions.push(Instruction::IDiv(Operand::Reg(Register::R10)));
+            }
+            _ => {
+              replaced_instructions.push(Instruction::IDiv(operand.clone()));
+            }
+          },
+          Instruction::Cmp(src, dst) => match (src, dst) {
+            (Operand::Stack(s), Operand::Stack(d)) => {
+              replaced_instructions.push(Instruction::Mov(
+                Operand::Stack(*s),
+                Operand::Reg(Register::R10),
+              ));
+              replaced_instructions.push(Instruction::Cmp(
+                Operand::Reg(Register::R10),
+                Operand::Stack(*d),
+              ));
+            }
+            (_, Operand::Imm(n)) => {
+              replaced_instructions.push(Instruction::Mov(
+                Operand::Imm(*n),
+                Operand::Reg(Register::R11),
+              ));
+              replaced_instructions
+                .push(Instruction::Cmp(src.clone(), Operand::Reg(Register::R11)));
+            }
+            _ => {
+              replaced_instructions.push(instruction.clone());
+            }
+          },
+          _ => {
+            replaced_instructions.push(instruction.clone());
+          }
+        }
+      }
+
+      processed_functions.push(FunctionDef {
+        name: function.name.clone(),
+        instructions: replaced_instructions,
+      });
+    }
+
+    Program {
+      functions: processed_functions,
+    }
+  }
+
+  pub fn replace_pseudo(&mut self, prog: &Program) -> Program {
+    let mut processed_functions = Vec::new();
+
+    for function in &prog.functions {
+      let mut replaced_instructions: Vec<Instruction> = Vec::new();
+
+      for instruction in &function.instructions {
+        match instruction {
+          Instruction::Mov(src, dst) => {
+            replaced_instructions.push(Instruction::Mov(
+              self.replace_operand(src),
+              self.replace_operand(dst),
+            ));
+          }
+          Instruction::Unary(op, val) => {
+            replaced_instructions.push(Instruction::Unary(op.clone(), self.replace_operand(val)));
+          }
+          Instruction::Binary(binary_op, operand1, operand2) => {
+            replaced_instructions.push(Instruction::Binary(
+              *binary_op,
+              self.replace_operand(operand1),
+              self.replace_operand(operand2),
+            ));
+          }
+          Instruction::IDiv(operand) => {
+            replaced_instructions.push(Instruction::IDiv(self.replace_operand(operand)));
+          }
+          Instruction::Cmp(operand, operand1) => {
+            replaced_instructions.push(Instruction::Cmp(
+              self.replace_operand(operand),
+              self.replace_operand(operand1),
+            ));
+          }
+          Instruction::SetCC(conditional_code, operand) => {
+            replaced_instructions.push(Instruction::SetCC(
+              *conditional_code,
+              self.replace_operand(operand),
+            ));
+          }
+          _ => {
+            replaced_instructions.push(instruction.clone());
+          }
+        }
+      }
+
+      processed_functions.push(FunctionDef {
+        name: function.name.clone(),
+        instructions: replaced_instructions,
+      });
+    }
+
+    Program {
+      functions: processed_functions,
+    }
+  }
+
+  fn replace_operand(&mut self, operand: &Operand) -> Operand {
+    match operand {
+      Operand::Imm(i) => Operand::Imm(*i),
+      Operand::Reg(r) => Operand::Reg(*r),
+      Operand::Pseudo(pseudo) => {
+        if self.identifiers.contains_key(pseudo) {
+          Operand::Stack(*self.identifiers.get(pseudo).unwrap())
+        } else {
+          self.variable_count += 1;
+          let stack_offset = -4 * self.variable_count;
+          self.identifiers.insert(pseudo.clone(), stack_offset);
+          Operand::Stack(stack_offset)
+        }
+      }
+      Operand::Stack(s) => Operand::Stack(*s),
+    }
+  }
+}
+
+#[derive(Debug)]
+pub struct FunctionDef {
+  pub name: String,
+  pub instructions: Vec<Instruction>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Instruction {
+  Mov(Operand, Operand),
+  Unary(UnaryOp, Operand),
+  Binary(BinaryOp, Operand, Operand),
+  Cmp(Operand, Operand),
+  IDiv(Operand),
+  Cdq,
+  Jmp(String),
+  JmpCC(ConditionalCode, String),
+  SetCC(ConditionalCode, Operand),
+  Label(String),
+  AllocateStack(i32),
+  DeAllocateStack(i32),
+  Push(Operand),
+  Call(String),
+  Return,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum BinaryOp {
+  Add,
+  Sub,
+  Mul,
+  And,
+  Or,
+  GreaterThan,
+  GreaterOrEqual,
+  LessThan,
+  LessOrEqual,
+}
+#[derive(Debug, Clone, Copy)]
+pub enum UnaryOp {
+  Neg,
+  PrefixDec,
+  Complement,
+  Not,
+}
+
+#[derive(Debug, Clone)]
+pub enum Operand {
+  Imm(i32),
+  Reg(Register),
+  Pseudo(String),
+  Stack(i32),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Register {
+  Ax,
+  Cx,
+  Dx,
+  Di,
+  Si,
+  R8,
+  R9,
+  R10,
+  R11,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ConditionalCode {
+  E,
+  NE,
+  G,
+  GE,
+  L,
+  LE,
+}

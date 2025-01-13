@@ -1,2 +1,9 @@
 [package]
 name = "backend"
+
+[lib]
+name = "backend"
+path = "src/lib.rs"
+
+[dependencies]
+frontend = { path = "../frontend" }

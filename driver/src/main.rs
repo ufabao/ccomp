@@ -1,44 +1,13 @@
-use std::fs;
-
-use ccomp::{
-  backend::{
-    asm::{assemblyast, codegen::generate_assembly, tacky_to_asm_ast},
-    ast::{looplabeling::LoopLabeler, nameresolution::NameResolver, Accept},
-    tacky::TacVisitor,
-  },
-  compile_and_run,
-  frontend::c_grammar,
-};
+//use backend::asm::{assemblyast, codegen::generate_assembly, tacky_to_asm_ast};
+use backend::generate_code;
+use driver::compile_and_run;
+use frontend::front_end_passes;
 
 fn driver(path: &str) -> Result<String, String> {
-  let input = match fs::read_to_string(path) {
-    Ok(contents) => contents,
-    Err(e) => return Err(format!("Error reading file: {}", e)),
-  };
+  let final_ast = front_end_passes(path)?;
+  dbg!(&final_ast);
 
-  let prog = match c_grammar::ProgramParser::new().parse(&input) {
-    Ok(prog) => prog,
-    Err(e) => {
-      return Err(format!("Error parsing input: {}", e));
-    }
-  };
-  //dbg!(&prog);
-  let name_resolved_ast = prog.accept(&mut NameResolver::new());
-  //dbg!(&name_resolved_asm);
-  let loop_labeled_ast = name_resolved_ast.accept(&mut LoopLabeler::new());
-  //dbg!(&loop_labeled_ast);
-  let tac = loop_labeled_ast.accept(&mut TacVisitor::new());
-  //dbg!(&tac);
-  let asm = tacky_to_asm_ast(&tac);
-  //dbg!(&asm);
-  // start making passes
-  let mut passes = assemblyast::ASMPasses::default();
-  let replaced_asm = passes.replace_pseudo(&asm);
-  //dbg!(&replaced_asm);
-  let final_asm = passes.final_pass(&replaced_asm);
-  //dbg!(&final_asm);
-  let code = generate_assembly(&final_asm);
-
+  let code = generate_code(&final_ast);
   Ok(code)
 }
 
@@ -56,7 +25,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ccomp::compile_and_run;
+  use driver::compile_and_run;
 
   fn test_file_returns_value(path: &str, expected: i32) {
     let code = driver(path);

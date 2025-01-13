@@ -1,5 +1,6 @@
-//pub mod looplabeling;
+pub mod looplabeling;
 pub mod nameresolution;
+pub mod typechecker;
 
 pub trait Visitor {
   type Program;

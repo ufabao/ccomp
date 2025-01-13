@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 frontend = { path = "../frontend" }
 backend = { path = "../backend" }
+tempfile = "3.2.0"
 
 [[bin]]
 name = "driver"

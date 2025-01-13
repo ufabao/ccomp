@@ -35,7 +35,8 @@ impl LoopLabeler {
 
 impl Visitor for LoopLabeler {
   type Program = Program;
-  type Function = Function;
+  type FunctionDecl = FunctionDecl;
+  type VariableDecl = VariableDecl;
   type BlockItem = BlockItem;
   type Declaration = Declaration;
   type Statement = Statement;
@@ -44,20 +45,29 @@ impl Visitor for LoopLabeler {
 
   fn visit_program(&mut self, program: &Program) -> Self::Program {
     match program {
-      Program::Func(func) => Program::Func(self.visit_function(func)),
+      Program::Program(functions) => {
+        let new_functions = functions
+          .iter()
+          .map(|function| self.visit_function_decl(function))
+          .collect();
+        Program::Program(new_functions)
+      }
     }
   }
 
-  fn visit_function(&mut self, function: &Function) -> Self::Function {
-    let body = function
-      .body
-      .items
-      .iter()
-      .map(|item| self.visit_block_item(item))
-      .collect();
-    Function {
+  fn visit_function_decl(&mut self, function: &FunctionDecl) -> Self::FunctionDecl {
+    let new_body = function.body.as_ref().map(|block| {
+      let new_block = block
+        .items
+        .iter()
+        .map(|item| self.visit_block_item(item))
+        .collect();
+      Block { items: new_block }
+    });
+    FunctionDecl {
       name: function.name.clone(),
-      body: Block { items: body },
+      params: function.params.clone(),
+      body: new_body,
     }
   }
 
@@ -71,12 +81,13 @@ impl Visitor for LoopLabeler {
   }
 
   fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Declaration {
-    Declaration {
-      name: declaration.name.clone(),
-      exp: declaration
-        .exp
-        .as_ref()
-        .map(|exp| self.visit_expression(exp)),
+    match declaration {
+      Declaration::FuncDeclaration(function) => {
+        Declaration::FuncDeclaration(self.visit_function_decl(function))
+      }
+      Declaration::VarDeclaration(variable) => {
+        Declaration::VarDeclaration(self.visit_variable_decl(variable))
+      }
     }
   }
 
@@ -139,7 +150,7 @@ impl Visitor for LoopLabeler {
   fn visit_for_init(&mut self, init: &ForInit) -> Self::ForInit {
     match init {
       ForInit::Declaration(declaration) => {
-        ForInit::Declaration(self.visit_declaration(declaration))
+        ForInit::Declaration(self.visit_variable_decl(declaration))
       }
       ForInit::Expression(expression) => {
         if let Some(expression) = expression {
@@ -169,6 +180,21 @@ impl Visitor for LoopLabeler {
         Expression::Assignment(var.clone(), Box::new(new_exp))
       }
       Expression::Conditional(_, _, _) => todo!(),
+      Expression::FunctionCall(name, vec) => {
+        let new_vec = vec.iter().map(|exp| self.visit_expression(exp)).collect();
+        Expression::FunctionCall(name.clone(), new_vec)
+      }
+    }
+  }
+
+  fn visit_variable_decl(&mut self, variable: &VariableDecl) -> Self::VariableDecl {
+    let new_value = variable
+      .value
+      .as_ref()
+      .map(|exp| self.visit_expression(exp));
+    VariableDecl {
+      name: variable.name.clone(),
+      value: new_value,
     }
   }
 }

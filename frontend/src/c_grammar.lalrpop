@@ -25,7 +25,8 @@ Declaration: Declaration = {
 }
 
 VariableDeclaration : VariableDecl = {
-  "int" <name : ID> "=" <e : Exp?> ";" => VariableDecl { name: name, value: e},
+  "int" <name : ID> "=" <e : Exp> ";" => VariableDecl { name: name, value: Some(e)},
+  "int" <name: ID> ";" => VariableDecl {name: name, value: None }
 }
 
 FunctionDeclaration : FunctionDecl = {

@@ -33,11 +33,12 @@ impl NameResolver {
     self.identifier_maps.push(HashMap::new());
   }
 
-  fn end_scope(&mut self) {
+  fn end_scope(&mut self) -> Result<(), String> {
     self.identifier_maps.pop();
     if self.identifier_maps.len() == 0 {
-      panic!("Popped too many scopes");
+      return Err(format!("Popped too many scopes"));
     }
+    Ok(())
   }
 
   fn declare_variable(&mut self, name: &str, linkage: Linkage) {
@@ -72,23 +73,24 @@ impl NameResolver {
 }
 
 impl Visitor for NameResolver {
-  type Program = Program;
-  type FunctionDecl = FunctionDecl;
-  type VariableDecl = VariableDecl;
-  type BlockItem = BlockItem;
-  type Declaration = Declaration;
-  type Statement = Statement;
-  type ForInit = ForInit;
-  type Expression = Expression;
+  type Program = Result<Program, String>;
+  type FunctionDecl = Result<FunctionDecl, String>;
+  type VariableDecl = Result<VariableDecl, String>;
+  type BlockItem = Result<BlockItem, String>;
+  type Declaration = Result<Declaration, String>;
+  type Statement = Result<Statement, String>;
+  type ForInit = Result<ForInit, String>;
+  type Expression = Result<Expression, String>;
 
   fn visit_program(&mut self, program: &Program) -> Self::Program {
     match program {
       Program::Program(functions) => {
-        let funcs = functions
+        let new_funcs = functions
           .iter()
           .map(|f| self.visit_function_decl(f))
-          .collect();
-        Program::Program(funcs)
+          .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Program::Program(new_funcs))
       }
     }
   }
@@ -113,59 +115,61 @@ impl Visitor for NameResolver {
             .items
             .iter()
             .map(|bi| self.visit_block_item(bi))
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
         });
-        self.end_scope();
+        self.end_scope()?;
         new_block
       }
       None => None,
     };
-    self.end_scope();
+    self.end_scope()?;
 
-    FunctionDecl {
+    Ok(FunctionDecl {
       name: new_name,
       params: new_params,
       body: new_body,
-    }
+    })
   }
 
   fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::BlockItem {
     match block_item {
-      BlockItem::Statement(stmt) => BlockItem::Statement(self.visit_statement(stmt)),
-      BlockItem::Declaration(decl) => BlockItem::Declaration(self.visit_declaration(decl)),
+      BlockItem::Statement(stmt) => Ok(BlockItem::Statement(self.visit_statement(stmt)?)),
+      BlockItem::Declaration(decl) => Ok(BlockItem::Declaration(self.visit_declaration(decl)?)),
     }
   }
 
   fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Declaration {
     match declaration {
-      Declaration::FuncDeclaration(func) => {
-        Declaration::FuncDeclaration(self.visit_function_decl(func))
-      }
+      Declaration::FuncDeclaration(func) => Ok(Declaration::FuncDeclaration(
+        self.visit_function_decl(func)?,
+      )),
       Declaration::VarDeclaration(var) => {
         self.declare_variable(&var.name, Linkage::Internal);
-        Declaration::VarDeclaration(VariableDecl {
+        Ok(Declaration::VarDeclaration(VariableDecl {
           name: self.resolve_variable(&var.name).unwrap().name,
           value: match &var.value {
-            Some(exp) => Some(self.visit_expression(exp)),
+            Some(exp) => Some(self.visit_expression(exp)?),
             None => None,
           },
-        })
+        }))
       }
     }
   }
 
   fn visit_statement(&mut self, stmt: &Statement) -> Self::Statement {
     match stmt {
-      Statement::Expression(expression) => Statement::Expression(self.visit_expression(expression)),
-      Statement::Return(expression) => Statement::Return(self.visit_expression(expression)),
-      Statement::If(exp, stmt1, stmt2) => Statement::If(
-        self.visit_expression(exp),
-        Box::new(self.visit_statement(stmt1)),
+      Statement::Expression(expression) => {
+        Ok(Statement::Expression(self.visit_expression(expression)?))
+      }
+      Statement::Return(expression) => Ok(Statement::Return(self.visit_expression(expression)?)),
+      Statement::If(exp, stmt1, stmt2) => Ok(Statement::If(
+        self.visit_expression(exp)?,
+        Box::new(self.visit_statement(stmt1)?),
         match stmt2 {
-          Some(stmt) => Some(Box::new(self.visit_statement(stmt))),
+          Some(stmt) => Some(Box::new(self.visit_statement(stmt)?)),
           None => None,
         },
-      ),
+      )),
       Statement::Compound(block) => {
         self.begin_scope();
         let stmt = Statement::Compound(Block {
@@ -173,37 +177,37 @@ impl Visitor for NameResolver {
             .items
             .iter()
             .map(|bi| self.visit_block_item(bi))
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
         });
-        self.end_scope();
-        stmt
+        self.end_scope()?;
+        Ok(stmt)
       }
-      Statement::While(exp, statement, label) => Statement::While(
-        self.visit_expression(exp),
-        Box::new(self.visit_statement(statement)),
+      Statement::While(exp, statement, label) => Ok(Statement::While(
+        self.visit_expression(exp)?,
+        Box::new(self.visit_statement(statement)?),
         label.clone(),
-      ),
+      )),
       Statement::For(init, exp2, exp3, statement, label) => {
         self.begin_scope();
         let stmt = Statement::For(
-          self.visit_for_init(init),
+          self.visit_for_init(init)?,
           match exp2 {
-            Some(exp) => Some(self.visit_expression(exp)),
+            Some(exp) => Some(self.visit_expression(exp)?),
             None => None,
           },
           match exp3 {
-            Some(exp) => Some(self.visit_expression(exp)),
+            Some(exp) => Some(self.visit_expression(exp)?),
             None => None,
           },
-          Box::new(self.visit_statement(statement)),
+          Box::new(self.visit_statement(statement)?),
           label.clone(),
         );
-        self.end_scope();
-        stmt
+        self.end_scope()?;
+        Ok(stmt)
       }
-      Statement::Continue(label) => Statement::Continue(label.clone()),
-      Statement::Break(label) => Statement::Break(label.clone()),
-      Statement::Null => Statement::Null,
+      Statement::Continue(label) => Ok(Statement::Continue(label.clone())),
+      Statement::Break(label) => Ok(Statement::Break(label.clone())),
+      Statement::Null => Ok(Statement::Null),
     }
   }
 
@@ -211,56 +215,62 @@ impl Visitor for NameResolver {
     match init {
       ForInit::Expression(exp) => {
         if let Some(exp) = exp {
-          ForInit::Expression(Some(self.visit_expression(exp)))
+          Ok(ForInit::Expression(Some(self.visit_expression(exp)?)))
         } else {
-          ForInit::Expression(None)
+          Ok(ForInit::Expression(None))
         }
       }
-      ForInit::Declaration(decl) => ForInit::Declaration(self.visit_variable_decl(decl)),
+      ForInit::Declaration(decl) => Ok(ForInit::Declaration(self.visit_variable_decl(decl)?)),
     }
   }
 
   fn visit_expression(&mut self, expression: &Expression) -> Self::Expression {
     match expression {
-      Expression::Int(i) => Expression::Int(*i),
+      Expression::Int(i) => Ok(Expression::Int(*i)),
       Expression::Var(name) => {
         let resolved_name = self.resolve_variable(name);
         if let Some(resolved_name) = resolved_name {
-          Expression::Var(resolved_name.name)
+          Ok(Expression::Var(resolved_name.name))
         } else {
-          panic!("Variable '{}' used before declared", name);
+          return Err(format!("Variable '{}' used before declared", name));
         }
       }
-      Expression::Unary(op, exp) => Expression::Unary(*op, Box::new(self.visit_expression(exp))),
-      Expression::Binary(op, exp1, exp2) => Expression::Binary(
+      Expression::Unary(op, exp) => Ok(Expression::Unary(
         *op,
-        Box::new(self.visit_expression(exp1)),
-        Box::new(self.visit_expression(exp2)),
-      ),
+        Box::new(self.visit_expression(exp)?),
+      )),
+      Expression::Binary(op, exp1, exp2) => Ok(Expression::Binary(
+        *op,
+        Box::new(self.visit_expression(exp1)?),
+        Box::new(self.visit_expression(exp2)?),
+      )),
       Expression::Assignment(exp1, exp2) => {
         if let Expression::Var(_) = **exp1 {
-          Expression::Assignment(
-            Box::new(self.visit_expression(exp1)),
-            Box::new(self.visit_expression(exp2)),
-          )
+          Ok(Expression::Assignment(
+            Box::new(self.visit_expression(exp1)?),
+            Box::new(self.visit_expression(exp2)?),
+          ))
         } else {
-          panic!("Left hand side of assignment must be a variable");
+          return Err(format!("Left hand side of assignment must be a variable"));
         }
       }
-      Expression::Conditional(exp1, exp2, exp3) => Expression::Conditional(
-        Box::new(self.visit_expression(exp1)),
-        Box::new(self.visit_expression(exp2)),
-        Box::new(self.visit_expression(exp3)),
-      ),
+      Expression::Conditional(exp1, exp2, exp3) => Ok(Expression::Conditional(
+        Box::new(self.visit_expression(exp1)?),
+        Box::new(self.visit_expression(exp2)?),
+        Box::new(self.visit_expression(exp3)?),
+      )),
       Expression::FunctionCall(name, vec) => {
         let resolved_name = self.resolve_variable(name);
         if let Some(resolved_name) = resolved_name {
-          Expression::FunctionCall(
+          Ok(Expression::FunctionCall(
             resolved_name.name,
-            vec.iter().map(|exp| self.visit_expression(exp)).collect(),
-          )
+            vec
+              .iter()
+              .map(|exp| self.visit_expression(exp))
+              .collect::<Result<Vec<_>, _>>()?,
+          ))
         } else {
-          panic!("Function '{}' used before declared", name);
+          return Err(format!("Function '{}' used before declared", name));
         }
       }
     }
@@ -268,12 +278,12 @@ impl Visitor for NameResolver {
 
   fn visit_variable_decl(&mut self, variable: &VariableDecl) -> Self::VariableDecl {
     self.declare_variable(&variable.name, Linkage::Internal);
-    VariableDecl {
+    Ok(VariableDecl {
       name: self.resolve_variable(&variable.name).unwrap().name,
       value: match &variable.value {
-        Some(exp) => Some(self.visit_expression(exp)),
+        Some(exp) => Some(self.visit_expression(exp)?),
         None => None,
       },
-    }
+    })
   }
 }

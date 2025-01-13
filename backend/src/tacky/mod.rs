@@ -2,7 +2,6 @@ use frontend::ast::{
   self, BlockItem, Declaration, Expression, ForInit, FunctionDecl, Program, Statement, VariableDecl,
 };
 use std::collections::HashMap;
-use std::panic;
 
 #[derive(Debug)]
 pub struct TacBuilder {
@@ -22,91 +21,101 @@ impl TacBuilder {
     }
   }
 
-  pub fn build_program(mut self, program: &Program) -> Tac {
+  pub fn build_program(mut self, program: &Program) -> Result<Tac, String> {
     let functions = match program {
       Program::Program(functions) => functions
         .iter()
-        .filter_map(|f| self.build_function(f))
+        .map(|f| self.build_function(f))
+        .collect::<Result<Vec<_>, String>>()?
+        .into_iter()
+        .filter_map(|f| f)
         .collect(),
     };
-    Tac { functions }
+
+    Ok(Tac { functions })
   }
 
-  fn build_function(&mut self, func: &FunctionDecl) -> Option<FunctionDef> {
+  fn build_function(&mut self, func: &FunctionDecl) -> Result<Option<FunctionDef>, String> {
     if let Some(body) = &func.body {
       self.instructions.clear();
       for item in &body.items {
-        self.build_block_item(item);
+        self.build_block_item(item)?;
       }
-      Some(FunctionDef {
+      Ok(Some(FunctionDef {
         name: func.name.clone(),
         params: func.params.clone(),
         body: std::mem::take(&mut self.instructions),
-      })
+      }))
     } else {
-      None
+      Ok(None)
     }
   }
 
-  fn build_block_item(&mut self, item: &BlockItem) {
+  fn build_block_item(&mut self, item: &BlockItem) -> Result<(), String> {
     match item {
-      BlockItem::Statement(stmt) => self.build_statement(stmt),
-      BlockItem::Declaration(decl) => self.build_declaration(decl),
+      BlockItem::Statement(stmt) => self.build_statement(stmt)?,
+      BlockItem::Declaration(decl) => self.build_declaration(decl)?,
     }
+    Ok(())
   }
 
-  fn build_declaration(&mut self, decl: &Declaration) {
+  fn build_declaration(&mut self, decl: &Declaration) -> Result<(), String> {
     match decl {
       Declaration::VarDeclaration(var) => {
-        self.build_var_declaration(var);
+        self.build_var_declaration(var)?;
       }
-      Declaration::FuncDeclaration(_) => {
-        panic!("Function declarations within functions are not supported");
+      Declaration::FuncDeclaration(funcdecl) => {
+        return Err(format!(
+          "Function {} declarared within a function is not support",
+          funcdecl.name
+        ));
       }
     }
+    Ok(())
   }
 
-  fn build_statement(&mut self, stmt: &Statement) {
+  fn build_statement(&mut self, stmt: &Statement) -> Result<(), String> {
     match stmt {
       Statement::Return(expr) => {
-        let val = self.build_expression(expr);
+        let val = self.build_expression(expr)?;
         self.add_instruction(Instruction::Return(val));
       }
       Statement::Expression(expr) => {
-        self.build_expression(expr);
+        self.build_expression(expr)?;
       }
       Statement::If(cond, then_stmt, else_stmt) => {
-        self.build_if_statement(cond, then_stmt, else_stmt);
+        self.build_if_statement(cond, then_stmt, else_stmt)?;
       }
       Statement::While(cond, body, label) => {
-        self.build_while_statement(cond, body, label);
+        self.build_while_statement(cond, body, label)?;
       }
       Statement::For(init, cond, update, body, label) => {
-        self.build_for_statement(init, cond, update, body, label);
+        self.build_for_statement(init, cond, update, body, label)?;
       }
-      Statement::Break(label) => self.build_break(label),
-      Statement::Continue(label) => self.build_continue(label),
+      Statement::Break(label) => self.build_break(label)?,
+      Statement::Continue(label) => self.build_continue(label)?,
       Statement::Compound(block) => {
         for item in &block.items {
-          self.build_block_item(item);
+          self.build_block_item(item)?;
         }
       }
       Statement::Null => {}
     }
+    Ok(())
   }
 
-  fn build_expression(&mut self, expr: &Expression) -> Val {
+  fn build_expression(&mut self, expr: &Expression) -> Result<Val, String> {
     match expr {
-      Expression::Int(n) => Val::Int(*n),
-      Expression::Var(name) => Val::Var(name.clone()),
-      Expression::Binary(op, lhs, rhs) => self.build_binary_expression(*op, lhs, rhs),
-      Expression::Unary(op, expr) => self.build_unary_expression(*op, expr),
-      Expression::Assignment(lhs, rhs) => self.build_assignment(lhs, rhs),
+      Expression::Int(n) => Ok(Val::Int(*n)),
+      Expression::Var(name) => Ok(Val::Var(name.clone())),
+      Expression::Binary(op, lhs, rhs) => Ok(self.build_binary_expression(*op, lhs, rhs)?),
+      Expression::Unary(op, expr) => Ok(self.build_unary_expression(*op, expr)?),
+      Expression::Assignment(lhs, rhs) => Ok(self.build_assignment(lhs, rhs)?),
       Expression::Conditional(_, _, _) => todo!(),
       Expression::FunctionCall(name, args) => {
         let mut new_args = Vec::new();
         for arg in args {
-          let temp = self.build_expression(arg);
+          let temp = self.build_expression(arg)?;
           let arg = self.new_temp();
           self.add_instruction(Instruction::Copy(temp, arg.clone()));
           new_args.push(arg);
@@ -117,7 +126,7 @@ impl TacBuilder {
           new_args,
           result.clone(),
         ));
-        result
+        Ok(result)
       }
     }
   }
@@ -127,13 +136,13 @@ impl TacBuilder {
     op: ast::BinaryOp,
     lhs: &Expression,
     rhs: &Expression,
-  ) -> Val {
+  ) -> Result<Val, String> {
     match op {
-      ast::BinaryOp::And => self.build_and_expression(lhs, rhs),
-      ast::BinaryOp::Or => self.build_or_expression(lhs, rhs),
+      ast::BinaryOp::And => Ok(self.build_and_expression(lhs, rhs)?),
+      ast::BinaryOp::Or => Ok(self.build_or_expression(lhs, rhs)?),
       _ => {
-        let lhs_val = self.build_expression(lhs);
-        let rhs_val = self.build_expression(rhs);
+        let lhs_val = self.build_expression(lhs)?;
+        let rhs_val = self.build_expression(rhs)?;
         let result = self.new_temp();
         self.add_instruction(Instruction::Binary(
           self.binary_name_match(op),
@@ -141,7 +150,7 @@ impl TacBuilder {
           rhs_val,
           result.clone(),
         ));
-        result
+        Ok(result)
       }
     }
   }
@@ -151,22 +160,23 @@ impl TacBuilder {
     cond: &Expression,
     then_stmt: &Statement,
     else_stmt: &Option<Box<Statement>>,
-  ) {
-    let cond_val = self.build_expression(cond);
+  ) -> Result<(), String> {
+    let cond_val = self.build_expression(cond)?;
     let false_label = self.new_label("if_false");
     self.add_instruction(Instruction::JumpIfZero(cond_val, false_label.clone()));
 
-    self.build_statement(then_stmt);
+    self.build_statement(then_stmt)?;
 
     if let Some(else_stmt) = else_stmt {
       let end_label = self.new_label("end");
       self.add_instruction(Instruction::Jump(end_label.clone()));
       self.add_instruction(Instruction::Label(false_label));
-      self.build_statement(else_stmt);
+      self.build_statement(else_stmt)?;
       self.add_instruction(Instruction::Label(end_label));
     } else {
       self.add_instruction(Instruction::Label(false_label));
     }
+    Ok(())
   }
 
   // Helper methods
@@ -204,12 +214,12 @@ impl TacBuilder {
     }
   }
 
-  fn build_and_expression(&mut self, lhs: &Expression, rhs: &Expression) -> Val {
-    let val1 = self.build_expression(lhs);
+  fn build_and_expression(&mut self, lhs: &Expression, rhs: &Expression) -> Result<Val, String> {
+    let val1 = self.build_expression(lhs)?;
     let false_label = self.new_label("and_false");
     self.add_instruction(Instruction::JumpIfZero(val1, false_label.clone()));
 
-    let val2 = self.build_expression(rhs);
+    let val2 = self.build_expression(rhs)?;
     self.add_instruction(Instruction::JumpIfZero(val2, false_label.clone()));
 
     let result = self.new_temp();
@@ -222,15 +232,15 @@ impl TacBuilder {
     self.add_instruction(Instruction::Copy(Val::Int(0), result.clone()));
     self.add_instruction(Instruction::Label(end_label));
 
-    result
+    Ok(result)
   }
 
-  fn build_or_expression(&mut self, lhs: &Expression, rhs: &Expression) -> Val {
-    let val1 = self.build_expression(lhs);
+  fn build_or_expression(&mut self, lhs: &Expression, rhs: &Expression) -> Result<Val, String> {
+    let val1 = self.build_expression(lhs)?;
     let true_label = self.new_label("or_true");
     self.add_instruction(Instruction::JumpIfNotZero(val1, true_label.clone()));
 
-    let val2 = self.build_expression(rhs);
+    let val2 = self.build_expression(rhs)?;
     self.add_instruction(Instruction::JumpIfNotZero(val2, true_label.clone()));
 
     let result = self.new_temp();
@@ -243,40 +253,46 @@ impl TacBuilder {
     self.add_instruction(Instruction::Copy(Val::Int(1), result.clone()));
     self.add_instruction(Instruction::Label(end_label));
 
-    result
+    Ok(result)
   }
 
-  fn build_unary_expression(&mut self, op: ast::UnaryOp, expr: &Expression) -> Val {
-    let val = self.build_expression(expr);
+  fn build_unary_expression(&mut self, op: ast::UnaryOp, expr: &Expression) -> Result<Val, String> {
+    let val = self.build_expression(expr)?;
     let result = self.new_temp();
     self.add_instruction(Instruction::Unary(
       self.unary_name_match(op),
       val,
       result.clone(),
     ));
-    result
+    Ok(result)
   }
 
-  fn build_assignment(&mut self, lhs: &Expression, rhs: &Expression) -> Val {
+  fn build_assignment(&mut self, lhs: &Expression, rhs: &Expression) -> Result<Val, String> {
     let var_name = match lhs {
       Expression::Var(name) => name.clone(),
-      _ => panic!("Left-hand side of assignment must be a variable"),
+      _ => return Err("Left-hand side of assignment must be a variable".to_string()),
     };
-    let result = self.build_expression(rhs);
+    let result = self.build_expression(rhs)?;
     self.add_instruction(Instruction::Copy(result.clone(), Val::Var(var_name)));
-    result
+    Ok(result)
   }
 
-  fn build_while_statement(&mut self, cond: &Expression, body: &Statement, label: &str) {
+  fn build_while_statement(
+    &mut self,
+    cond: &Expression,
+    body: &Statement,
+    label: &str,
+  ) -> Result<(), String> {
     let (continue_label, break_label) = self.new_loop(label.to_string());
 
     self.add_instruction(Instruction::Label(continue_label.clone()));
-    let cond_val = self.build_expression(cond);
+    let cond_val = self.build_expression(cond)?;
     self.add_instruction(Instruction::JumpIfZero(cond_val, break_label.clone()));
 
-    self.build_statement(body);
+    self.build_statement(body)?;
     self.add_instruction(Instruction::Jump(continue_label));
     self.add_instruction(Instruction::Label(break_label));
+    Ok(())
   }
 
   fn build_for_statement(
@@ -286,13 +302,13 @@ impl TacBuilder {
     update: &Option<Expression>,
     body: &Statement,
     label: &str,
-  ) {
+  ) -> Result<(), String> {
     // Build initialization
     match init {
-      ForInit::Declaration(decl) => self.build_var_declaration(decl),
+      ForInit::Declaration(decl) => self.build_var_declaration(decl)?,
       ForInit::Expression(expr) => {
         if let Some(expr) = expr {
-          self.build_expression(expr);
+          self.build_expression(expr)?;
         }
       }
     }
@@ -302,35 +318,38 @@ impl TacBuilder {
 
     // Build condition check
     if let Some(cond) = cond {
-      let cond_val = self.build_expression(cond);
+      let cond_val = self.build_expression(cond)?;
       self.add_instruction(Instruction::JumpIfZero(cond_val, break_label.clone()));
     }
 
     // Build body
-    self.build_statement(body);
+    self.build_statement(body)?;
 
     // Build update expression
     if let Some(update) = update {
-      self.build_expression(update);
+      self.build_expression(update)?;
     }
 
     self.add_instruction(Instruction::Jump(continue_label));
     self.add_instruction(Instruction::Label(break_label));
+    Ok(())
   }
 
-  fn build_break(&mut self, label: &str) {
+  fn build_break(&mut self, label: &str) -> Result<(), String> {
     if let Some((_, break_label)) = self.loop_map.get(label) {
       self.add_instruction(Instruction::Jump(break_label.clone()));
+      Ok(())
     } else {
-      panic!("Break statement outside of loop");
+      return Err("Break statement outside of loop".to_string());
     }
   }
 
-  fn build_continue(&mut self, label: &str) {
+  fn build_continue(&mut self, label: &str) -> Result<(), String> {
     if let Some((continue_label, _)) = self.loop_map.get(label) {
       self.add_instruction(Instruction::Jump(continue_label.clone()));
+      Ok(())
     } else {
-      panic!("Continue statement outside of loop");
+      return Err("Continue statement outside of loop".to_string());
     }
   }
 
@@ -351,11 +370,12 @@ impl TacBuilder {
       ast::UnaryOp::Not => UnaryOp::Not,
     }
   }
-  fn build_var_declaration(&mut self, var: &VariableDecl) {
+  fn build_var_declaration(&mut self, var: &VariableDecl) -> Result<(), String> {
     if let Some(init) = &var.value {
-      let val = self.build_expression(init);
+      let val = self.build_expression(init)?;
       self.add_instruction(Instruction::Copy(val, Val::Var(var.name.clone())));
     }
+    Ok(())
   }
 }
 

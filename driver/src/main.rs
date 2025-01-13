@@ -7,7 +7,7 @@ fn driver(path: &str) -> Result<String, String> {
   let (final_ast, symbol_table) = front_end_passes(path)?;
   //dbg!(&final_ast);
 
-  let code = generate_code(&final_ast, symbol_table);
+  let code = generate_code(&final_ast, symbol_table)?;
   Ok(code)
 }
 
@@ -24,8 +24,6 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-  use std::io::stdin;
-
   use super::*;
   use driver::compile_and_run;
 

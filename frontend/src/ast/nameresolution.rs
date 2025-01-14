@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum Linkage {
   External,
   Internal,
@@ -49,7 +49,11 @@ impl NameResolver {
     } else {
       let new_name = match linkage {
         Linkage::External => name.to_string(),
-        Linkage::Internal => "user_var".to_string() + &self.var_count.to_string(),
+        Linkage::Internal => {
+          let temp = "user_var".to_string() + &self.var_count.to_string();
+          self.var_count += 1;
+          temp
+        }
       };
       self.identifier_maps.last_mut().unwrap().insert(
         name.to_string(),
@@ -58,7 +62,6 @@ impl NameResolver {
           linkage: linkage,
         },
       );
-      self.var_count += 1;
     }
   }
 
@@ -69,6 +72,27 @@ impl NameResolver {
       }
     }
     None
+  }
+
+  fn file_scope_declaration(&mut self, decl: &Declaration) -> Result<Declaration, String> {
+    match decl {
+      Declaration::VarDeclaration(var) => {
+        self.identifier_maps[0].insert(
+          var.name.clone(),
+          IdentifierInfo {
+            name: var.name.clone(),
+            linkage: match var.storage {
+              Some(StorageClass::Static) => Linkage::Internal,
+              _ => Linkage::External,
+            },
+          },
+        );
+        Ok(decl.clone())
+      }
+      Declaration::FuncDeclaration(func) => Ok(Declaration::FuncDeclaration(
+        self.visit_function_decl(&func)?,
+      )),
+    }
   }
 }
 
@@ -84,14 +108,12 @@ impl Visitor for NameResolver {
 
   fn visit_program(&mut self, program: &Program) -> Self::Program {
     match program {
-      Program::Program(functions) => {
-        let new_funcs = functions
+      Program::Program(decls) => Ok(Program::Program(
+        decls
           .iter()
-          .map(|f| self.visit_function_decl(f))
-          .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(Program::Program(new_funcs))
-      }
+          .map(|decl| self.file_scope_declaration(decl))
+          .collect::<Result<Vec<_>, _>>()?,
+      )),
     }
   }
 
@@ -128,6 +150,7 @@ impl Visitor for NameResolver {
       name: new_name,
       params: new_params,
       body: new_body,
+      storage: function.storage.clone(),
     })
   }
 
@@ -144,14 +167,28 @@ impl Visitor for NameResolver {
         self.visit_function_decl(func)?,
       )),
       Declaration::VarDeclaration(var) => {
-        self.declare_variable(&var.name, Linkage::Internal);
-        Ok(Declaration::VarDeclaration(VariableDecl {
-          name: self.resolve_variable(&var.name).unwrap().name,
-          value: match &var.value {
-            Some(exp) => Some(self.visit_expression(exp)?),
-            None => None,
-          },
-        }))
+        // Check for existing declaration
+        if let Some(prev_entry) = self.identifier_maps.last().unwrap().get(&var.name) {
+          // Only allow redeclaration if previous has linkage and current is extern
+          let is_current_extern = var.storage == Some(StorageClass::Extern);
+          if !(prev_entry.linkage == Linkage::External && is_current_extern) {
+            return Err("Conflicting local declarations".to_string());
+          }
+        }
+
+        // Handle extern declarations
+        if var.storage == Some(StorageClass::Extern) {
+          self.declare_variable(&var.name, Linkage::External);
+          Ok(Declaration::VarDeclaration(var.clone()))
+        } else {
+          // For non-extern declarations, generate a unique name
+          self.declare_variable(&var.name, Linkage::Internal);
+          Ok(Declaration::VarDeclaration(VariableDecl {
+            name: self.resolve_variable(&var.name).unwrap().name,
+            value: var.value.clone(),
+            storage: var.storage.clone(),
+          }))
+        }
       }
     }
   }
@@ -284,6 +321,7 @@ impl Visitor for NameResolver {
         Some(exp) => Some(self.visit_expression(exp)?),
         None => None,
       },
+      storage: variable.storage.clone(),
     })
   }
 }

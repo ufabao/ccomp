@@ -32,42 +32,50 @@ impl Accept for Program {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Program {
-  Program(Vec<FunctionDecl>),
+  Program(Vec<Declaration>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Declaration {
   FuncDeclaration(FunctionDecl),
   VarDeclaration(VariableDecl),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FunctionDecl {
   pub name: String,
   pub params: Vec<String>,
   pub body: Option<Block>,
+  pub storage: Option<StorageClass>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VariableDecl {
   pub name: String,
   pub value: Option<Expression>,
+  pub storage: Option<StorageClass>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum StorageClass {
+  Static,
+  Extern,
+}
+
+#[derive(Debug, Clone)]
 pub struct Block {
   pub items: Vec<BlockItem>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BlockItem {
   Statement(Statement),
   Declaration(Declaration),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Statement {
   Expression(Expression),
   Return(Expression),
@@ -86,7 +94,7 @@ pub enum Statement {
   ),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ForInit {
   Declaration(VariableDecl),
   Expression(Option<Expression>),

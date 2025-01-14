@@ -45,11 +45,11 @@ impl Visitor for LoopLabeler {
   fn visit_program(&mut self, program: &Program) -> Self::Program {
     match program {
       Program::Program(functions) => {
-        let new_functions = functions
+        let new_decls = functions
           .iter()
-          .map(|function| self.visit_function_decl(function))
+          .map(|decl| self.visit_declaration(decl))
           .collect::<Result<Vec<_>, _>>()?;
-        Ok(Program::Program(new_functions))
+        Ok(Program::Program(new_decls))
       }
     }
   }
@@ -69,6 +69,7 @@ impl Visitor for LoopLabeler {
       name: function.name.clone(),
       params: function.params.clone(),
       body: new_body,
+      storage: function.storage.clone(),
     })
   }
 
@@ -222,6 +223,7 @@ impl Visitor for LoopLabeler {
     Ok(VariableDecl {
       name: variable.name.clone(),
       value: new_value,
+      storage: variable.storage.clone(),
     })
   }
 }

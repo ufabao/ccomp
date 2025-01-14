@@ -6,6 +6,7 @@ use frontend::front_end_passes;
 fn driver(path: &str) -> Result<String, String> {
   let (final_ast, symbol_table) = front_end_passes(path)?;
   //dbg!(&final_ast);
+  //dbg!(&symbol_table);
 
   let code = generate_code(&final_ast, symbol_table)?;
   Ok(code)
@@ -143,5 +144,38 @@ mod tests {
   #[test]
   fn test_hello_world() {
     test_file_prints_value("test_programs/hello_world.c", "Hello, World!\n");
+  }
+
+  #[test]
+  fn test_global_and_extern() {
+    test_file_returns_value("test_programs/globals_and_extern.c", 7);
+  }
+
+  #[test]
+  fn test_multiple_file_scope_statics() {
+    test_file_returns_value("test_programs/multiple_static_filescope_vars.c", 4);
+  }
+
+  #[test]
+  fn test_extern_block_scope_var() {
+    test_file_returns_value("test_programs/extern_block_scope_var.c", 3);
+  }
+
+  #[test]
+  fn test_multiple_static_locals() {
+    test_file_returns_value("test_programs/multiple_static_locals.c", 29);
+  }
+
+  #[test]
+  fn test_static_initialized_to_zero() {
+    test_file_returns_value("test_programs/static_initialized_to_zero.c", 4);
+  }
+
+  #[test]
+  fn test_static_recursive() {
+    test_file_prints_value(
+      "test_programs/test_static_recursive.c",
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    );
   }
 }

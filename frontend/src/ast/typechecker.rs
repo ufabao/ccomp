@@ -1,33 +1,43 @@
 use super::*;
 use crate::ast::Accept;
 use std::collections::HashMap;
-use std::fmt;
 
-#[derive(Debug)]
-pub enum TypeError {
-  FunctionRedefinition {
-    name: String,
-    reason: String,
-  },
-  SymbolRedefinition {
-    name: String,
-    existing_type: String,
-    attempted_type: String,
-  },
-  FunctionCallError {
-    name: String,
-    expected_params: i32,
-    actual_params: i32,
-  },
-  UndefinedFunction(String),
-  UndefinedVariable(String),
-  WrongTypeForVariable(String),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Defined {
+  Yes,
+  No,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Global {
+  Yes,
+  No,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum TypeInfo {
+pub enum InitialValue {
+  Tentative,
+  Initial(i32),
+  NoInitializer,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Types {
   Int,
-  FunType(i32, bool), // param count, already_defined_flag
+  FunType(i32),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum IdentifierAttributes {
+  FunAttr(i32, Defined, Global),
+  StaticAttr(InitialValue, Global),
+  LocalAttr,
+}
+
+#[derive(Debug)]
+pub struct TypeInfo {
+  pub type_name: Types,
+  pub attrs: IdentifierAttributes,
 }
 
 pub struct TypeChecker {
@@ -37,10 +47,7 @@ pub struct TypeChecker {
 impl TypeChecker {
   pub fn type_check_program(program: &Program) -> Result<HashMap<String, TypeInfo>, String> {
     let mut type_checker = TypeChecker::new();
-    let _ = program
-      .accept(&mut type_checker)
-      .map_err(|e| format!("{:?}", e));
-
+    type_checker.visit_program(program)?;
     Ok(type_checker.symbol_table)
   }
 
@@ -57,23 +64,100 @@ impl TypeChecker {
   fn get_symbol(&self, name: &str) -> Option<&TypeInfo> {
     self.symbol_table.get(name)
   }
+
+  fn typecheck_file_scope_var(&mut self, variable: &VariableDecl) -> Result<(), String> {
+    // First check - extern variables cannot have initializers
+    if variable.storage == Some(StorageClass::Extern) && variable.value.is_some() {
+      return Err(format!(
+        "Extern variable {} cannot have an initializer",
+        variable.name.clone()
+      ));
+    }
+
+    let mut initial_val = match variable.value {
+      Some(Expression::Int(val)) => InitialValue::Initial(val),
+      None => match variable.storage {
+        Some(StorageClass::Static) => InitialValue::Tentative,
+        _ => InitialValue::NoInitializer,
+      },
+      _ => {
+        return Err(format!(
+          "variable {} has non const initializer.",
+          variable.name.clone()
+        ))
+      }
+    };
+
+    let mut global = match variable.storage {
+      Some(StorageClass::Static) => Global::No,
+      _ => Global::Yes,
+    };
+
+    if let Some(old_decl) = self.symbol_table.get(&variable.name) {
+      if old_decl.type_name != Types::Int {
+        return Err(format!(
+          "variable {} already defined as function",
+          variable.name.clone()
+        ));
+      }
+      if variable.storage == Some(StorageClass::Extern) {
+        global = match &old_decl.attrs {
+          IdentifierAttributes::FunAttr(_, _, _) => Global::No,
+          IdentifierAttributes::StaticAttr(_, global) => *global,
+          IdentifierAttributes::LocalAttr => Global::No,
+        };
+      } else if let IdentifierAttributes::FunAttr(_, _, _) = old_decl.attrs {
+        return Err(format!(
+          "Conflicting variable linkage for {}",
+          variable.name.clone()
+        ));
+      } else if let IdentifierAttributes::LocalAttr = old_decl.attrs {
+        return Err(format!(
+          "Conflicting variable linkage for {}",
+          variable.name.clone()
+        ));
+      }
+      if let IdentifierAttributes::StaticAttr(InitialValue::Initial(n), _) = old_decl.attrs {
+        if initial_val != InitialValue::Initial(n) {
+          return Err(format!(
+            "Conflicting file scope variable definitions for {}",
+            variable.name.clone()
+          ));
+        } else {
+          initial_val = InitialValue::Initial(n);
+        }
+      }
+    }
+    let attrs = IdentifierAttributes::StaticAttr(initial_val, global);
+    self.add_symbol(
+      &variable.name,
+      TypeInfo {
+        type_name: Types::Int,
+        attrs,
+      },
+    );
+    Ok(())
+  }
 }
 
 impl Visitor for TypeChecker {
-  type Program = Result<(), TypeError>;
-  type FunctionDecl = Result<(), TypeError>;
-  type VariableDecl = Result<(), TypeError>;
-  type BlockItem = Result<(), TypeError>;
-  type Declaration = Result<(), TypeError>;
-  type Statement = Result<(), TypeError>;
-  type ForInit = Result<(), TypeError>;
-  type Expression = Result<(), TypeError>;
+  type Program = Result<(), String>;
+  type FunctionDecl = Result<(), String>;
+  type VariableDecl = Result<(), String>;
+  type BlockItem = Result<(), String>;
+  type Declaration = Result<(), String>;
+  type Statement = Result<(), String>;
+  type ForInit = Result<(), String>;
+  type Expression = Result<(), String>;
 
   fn visit_program(&mut self, program: &Program) -> Self::Program {
     match program {
       Program::Program(decls) => {
         for decl in decls {
-          self.visit_function_decl(decl)?;
+          match decl {
+            Declaration::FuncDeclaration(func) => self.visit_function_decl(func)?,
+            Declaration::VarDeclaration(var) => self.typecheck_file_scope_var(var)?,
+          }
         }
         Ok(())
       }
@@ -83,46 +167,56 @@ impl Visitor for TypeChecker {
   fn visit_function_decl(&mut self, function: &FunctionDecl) -> Self::FunctionDecl {
     let param_count = function.params.len() as i32;
     let has_body = function.body.is_some();
+    let mut already_defined = Defined::No;
 
     if let Some(old_decl) = self.symbol_table.get(&function.name) {
-      match old_decl {
-        TypeInfo::FunType(num_params, defined) => {
-          if *num_params != param_count {
-            return Err(TypeError::FunctionRedefinition {
-              name: function.name.clone(),
-              reason: format!(
-                "different parameter count: expected {}, got {}",
-                num_params, param_count
-              ),
-            });
+      match old_decl.attrs {
+        IdentifierAttributes::FunAttr(num_params, defined, linkage) => {
+          already_defined = match defined {
+            Defined::Yes => Defined::Yes,
+            Defined::No => Defined::No,
+          };
+          if num_params != param_count {
+            return Err(format!(
+              "Type mismatch for {}, different parameter count: expected {}, got {}",
+              function.name.clone(),
+              num_params,
+              param_count
+            ));
+          };
+
+          if let (Defined::Yes, true) = (defined, has_body) {
+            return Err(format!(
+              "function {} already has a body",
+              function.name.clone()
+            ));
           }
-          if *defined && has_body {
-            return Err(TypeError::FunctionRedefinition {
-              name: function.name.clone(),
-              reason: "function already has a body".to_string(),
-            });
+          if let (Global::Yes, Some(StorageClass::Static)) = (linkage, function.storage.clone()) {
+            return Err(format!("Conflicting linkage for {}", function.name.clone()));
           }
         }
-        TypeInfo::Int => {
-          return Err(TypeError::SymbolRedefinition {
-            name: function.name.clone(),
-            existing_type: "variable".to_string(),
-            attempted_type: "function".to_string(),
-          });
+        _ => {
+          return Err(format!(
+            "Symbol {} already defined as variable",
+            function.name.clone()
+          ));
         }
       }
     }
-
+    let defined = match function.body {
+      Some(_) => Defined::Yes,
+      None => already_defined,
+    };
+    let storage = match function.storage {
+      Some(StorageClass::Static) => Global::Yes,
+      _ => Global::No,
+    };
     self.add_symbol(
       &function.name,
-      TypeInfo::FunType(
-        param_count,
-        has_body
-          || self
-            .get_symbol(&function.name)
-            .map(|info| matches!(info, TypeInfo::FunType(_, true)))
-            .unwrap_or(false),
-      ),
+      TypeInfo {
+        type_name: Types::FunType(function.params.len() as i32),
+        attrs: IdentifierAttributes::FunAttr(param_count, defined, storage),
+      },
     );
 
     if let Some(body) = &function.body {
@@ -134,9 +228,80 @@ impl Visitor for TypeChecker {
   }
 
   fn visit_variable_decl(&mut self, variable: &VariableDecl) -> Self::VariableDecl {
-    self.add_symbol(&variable.name, TypeInfo::Int);
-    if let Some(value) = &variable.value {
-      self.visit_expression(value)?;
+    if variable.storage == Some(StorageClass::Extern) {
+      // First check - extern variables cannot have initializers
+      if variable.value.is_some() {
+        return Err(format!(
+          "Extern variable {} cannot have an initializer",
+          variable.name.clone()
+        ));
+      }
+
+      // Check existing declaration if any
+      if let Some(old_decl) = self.symbol_table.get(&variable.name) {
+        match &old_decl.attrs {
+          IdentifierAttributes::FunAttr(_, _, _) => {
+            return Err(format!(
+              "Extern variable {} already defined as function",
+              variable.name.clone()
+            ));
+          }
+          IdentifierAttributes::StaticAttr(_, global) => {
+            if *global == Global::No {
+              return Err(format!(
+                "Extern declaration of {} conflicts with static definition",
+                variable.name.clone()
+              ));
+            }
+          }
+          IdentifierAttributes::LocalAttr => {
+            return Err(format!(
+              "Extern declaration of {} conflicts with local definition",
+              variable.name.clone()
+            ));
+          }
+        }
+      } else {
+        // New extern declaration - always has external linkage (Global::Yes)
+        self.add_symbol(
+          &variable.name,
+          TypeInfo {
+            type_name: Types::Int,
+            attrs: IdentifierAttributes::StaticAttr(InitialValue::NoInitializer, Global::Yes),
+          },
+        );
+      }
+    } else if variable.storage == Some(StorageClass::Static) {
+      if let Some(Expression::Int(n)) = variable.value {
+        self.add_symbol(
+          &variable.name,
+          TypeInfo {
+            type_name: Types::Int,
+            attrs: IdentifierAttributes::StaticAttr(InitialValue::Initial(n), Global::No),
+          },
+        );
+      } else if variable.value.is_none() {
+        self.add_symbol(
+          &variable.name,
+          TypeInfo {
+            type_name: Types::Int,
+            attrs: IdentifierAttributes::StaticAttr(InitialValue::Initial(0), Global::No),
+          },
+        );
+      } else {
+        return Err(format!(
+          "Static variable {} has non const initializer",
+          variable.name.clone()
+        ));
+      }
+    } else {
+      self.add_symbol(
+        &variable.name,
+        TypeInfo {
+          type_name: Types::Int,
+          attrs: IdentifierAttributes::LocalAttr,
+        },
+      );
     }
     Ok(())
   }
@@ -222,39 +387,35 @@ impl Visitor for TypeChecker {
       Expression::Int(_) => {}
       Expression::Var(name) => {
         if let Some(info) = self.get_symbol(name) {
-          match info {
-            TypeInfo::Int => {}
+          match info.type_name {
+            Types::Int => {}
             _ => {
-              return Err(TypeError::WrongTypeForVariable(format!(
-                "Wrong type for variable {}",
-                name
-              )));
+              return Err(format!("Wrong type for variable {}", name));
             }
           }
         }
       }
       Expression::FunctionCall(name, args) => match self.get_symbol(name) {
-        Some(TypeInfo::FunType(param_count, _)) => {
-          if *param_count != args.len() as i32 {
-            return Err(TypeError::FunctionCallError {
-              name: name.clone(),
-              expected_params: *param_count,
-              actual_params: args.len() as i32,
-            });
+        Some(info) => match info.type_name {
+          Types::FunType(param_count) => {
+            if param_count != args.len() as i32 {
+              return Err(format!(
+                "Function '{}' called with wrong number of arguments. Expected: {}, got: {}",
+                name,
+                param_count,
+                args.len()
+              ));
+            }
+            for arg in args {
+              self.visit_expression(arg)?;
+            }
           }
-          for arg in args {
-            self.visit_expression(arg)?;
+          Types::Int => {
+            return Err(format!("Symbol '{}' is not a function", name));
           }
-        }
-        Some(TypeInfo::Int) => {
-          return Err(TypeError::SymbolRedefinition {
-            name: name.clone(),
-            existing_type: "variable".to_string(),
-            attempted_type: "function".to_string(),
-          });
-        }
+        },
         None => {
-          return Err(TypeError::UndefinedFunction(name.clone()));
+          return Err(format!("Function {} called before defined", name.clone()));
         }
       },
       Expression::Assignment(lhs, rhs) => {
@@ -268,46 +429,5 @@ impl Visitor for TypeChecker {
       }
     }
     Ok(())
-  }
-}
-
-impl fmt::Display for TypeError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      TypeError::FunctionRedefinition { name, reason } => {
-        write!(f, "Function '{}' redefinition error: {}", name, reason)
-      }
-      TypeError::SymbolRedefinition {
-        name,
-        existing_type,
-        attempted_type,
-      } => {
-        write!(
-          f,
-          "Symbol '{}' already defined as {} but attempted to define as {}",
-          name, existing_type, attempted_type
-        )
-      }
-      TypeError::FunctionCallError {
-        name,
-        expected_params,
-        actual_params,
-      } => {
-        write!(
-          f,
-          "Function '{}' called with wrong number of arguments. Expected: {}, got: {}",
-          name, expected_params, actual_params
-        )
-      }
-      TypeError::UndefinedFunction(name) => {
-        write!(f, "Call to undefined function '{}'", name)
-      }
-      TypeError::UndefinedVariable(name) => {
-        write!(f, "Use of undefined variable '{}'", name)
-      }
-      TypeError::WrongTypeForVariable(name) => {
-        write!(f, "Symbol '{}' is not a variable", name)
-      }
-    }
   }
 }

@@ -1,7 +1,67 @@
 use frontend::ast::{
-  self, BlockItem, Declaration, Expression, ForInit, FunctionDecl, Program, Statement, VariableDecl,
+  self,
+  typechecker::{IdentifierAttributes, TypeInfo},
+  BlockItem, Declaration, Expression, ForInit, FunctionDecl, Program, Statement, VariableDecl,
 };
 use std::collections::HashMap;
+
+pub fn generate_tac(
+  ast: &Program,
+  symbol_table: &HashMap<String, TypeInfo>,
+) -> Result<Tac, String> {
+  let tac_builder = TacBuilder::new();
+  let mut tac = tac_builder.build_program(ast)?;
+  let static_symbols = convert_symbols_to_tacky(&symbol_table);
+  add_static_variables_to_tac(&mut tac, static_symbols);
+  Ok(tac)
+}
+
+pub(crate) fn add_static_variables_to_tac(tac: &mut Tac, static_variables: Vec<StaticVariable>) {
+  for static_var in static_variables {
+    tac.top_level.push(TopLevel::StaticVariable(StaticVariable {
+      name: static_var.name,
+      global: static_var.global,
+      init: static_var.init,
+    }));
+  }
+}
+
+pub(crate) fn convert_symbols_to_tacky(
+  symbol_table: &HashMap<String, TypeInfo>,
+) -> Vec<StaticVariable> {
+  let mut tacky_defs: Vec<StaticVariable> = Vec::new();
+  for (name, entry) in symbol_table {
+    match &entry.attrs {
+      IdentifierAttributes::StaticAttr(init, glob) => match init {
+        ast::typechecker::InitialValue::Tentative => {
+          let global = match glob {
+            ast::typechecker::Global::Yes => true,
+            ast::typechecker::Global::No => false,
+          };
+          tacky_defs.push(StaticVariable {
+            name: name.clone(),
+            global: global,
+            init: 0,
+          });
+        }
+        ast::typechecker::InitialValue::Initial(n) => {
+          let global = match glob {
+            ast::typechecker::Global::Yes => true,
+            ast::typechecker::Global::No => false,
+          };
+          tacky_defs.push(StaticVariable {
+            name: name.clone(),
+            global,
+            init: *n,
+          });
+        }
+        ast::typechecker::InitialValue::NoInitializer => {}
+      },
+      _ => {}
+    }
+  }
+  tacky_defs
+}
 
 #[derive(Debug)]
 pub struct TacBuilder {
@@ -23,26 +83,37 @@ impl TacBuilder {
 
   pub fn build_program(mut self, program: &Program) -> Result<Tac, String> {
     let functions = match program {
-      Program::Program(functions) => functions
+      Program::Program(decls) => decls
         .iter()
-        .map(|f| self.build_function(f))
+        .filter_map(|decl| {
+          if let Declaration::FuncDeclaration(func_decl) = decl {
+            Some(func_decl)
+          } else {
+            None
+          }
+        })
+        .map(|func_decl| self.build_function(func_decl))
         .collect::<Result<Vec<_>, String>>()?
         .into_iter()
-        .filter_map(|f| f)
+        .flatten()
+        .map(TopLevel::Function)
         .collect(),
     };
 
-    Ok(Tac { functions })
+    Ok(Tac {
+      top_level: functions,
+    })
   }
 
-  fn build_function(&mut self, func: &FunctionDecl) -> Result<Option<FunctionDef>, String> {
+  fn build_function(&mut self, func: &FunctionDecl) -> Result<Option<Function>, String> {
     if let Some(body) = &func.body {
       self.instructions.clear();
       for item in &body.items {
         self.build_block_item(item)?;
       }
-      Ok(Some(FunctionDef {
+      Ok(Some(Function {
         name: func.name.clone(),
+        global: func.storage == Some(ast::StorageClass::Static),
         params: func.params.clone(),
         body: std::mem::take(&mut self.instructions),
       }))
@@ -371,6 +442,9 @@ impl TacBuilder {
     }
   }
   fn build_var_declaration(&mut self, var: &VariableDecl) -> Result<(), String> {
+    if let Some(_) = var.storage {
+      return Ok(());
+    }
     if let Some(init) = &var.value {
       let val = self.build_expression(init)?;
       self.add_instruction(Instruction::Copy(val, Val::Var(var.name.clone())));
@@ -382,14 +456,28 @@ impl TacBuilder {
 // Keep the existing type definitions
 #[derive(Debug)]
 pub struct Tac {
-  pub functions: Vec<FunctionDef>,
+  pub top_level: Vec<TopLevel>,
 }
 
 #[derive(Debug)]
-pub struct FunctionDef {
+pub enum TopLevel {
+  Function(Function),
+  StaticVariable(StaticVariable),
+}
+
+#[derive(Debug)]
+pub struct Function {
   pub name: String,
+  pub global: bool,
   pub params: Vec<String>,
   pub body: Vec<Instruction>,
+}
+
+#[derive(Debug)]
+pub struct StaticVariable {
+  pub name: String,
+  pub global: bool,
+  pub init: i32,
 }
 
 #[derive(Debug)]

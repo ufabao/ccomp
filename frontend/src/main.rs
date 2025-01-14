@@ -1,5 +1,6 @@
 use frontend::front_end_passes;
 
 fn main() {
-  let _ = front_end_passes("blah.c");
+  let ast = front_end_passes("blah.c");
+  //dbg!(ast);
 }

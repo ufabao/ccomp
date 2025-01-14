@@ -8,6 +8,7 @@ use crate::ast::{
     FunctionDecl,
     Program,
     Statement,
+    StorageClass,
     UnaryOp,
     VariableDecl,
 };
@@ -16,7 +17,7 @@ use std::str::FromStr;
 grammar;
 
 pub Program: Program = {
-    <f: FunctionDeclaration+> => Program::Program(f),
+    <d: Declaration+> => Program::Program(d),
 };
 
 Declaration: Declaration = {
@@ -25,22 +26,31 @@ Declaration: Declaration = {
 }
 
 VariableDeclaration : VariableDecl = {
-  "int" <name : ID> "=" <e : Exp> ";" => VariableDecl { name: name, value: Some(e)},
-  "int" <name: ID> ";" => VariableDecl {name: name, value: None }
+  <s: Specifier?> <t: TypeName> <name : ID> "=" <e : Exp> ";" => VariableDecl { name: name, value: Some(e), storage: s},
+  <s: Specifier?> <t: TypeName> <name: ID> ";" => VariableDecl {name: name, value: None, storage: s},
 }
 
 FunctionDeclaration : FunctionDecl = {
-  "int" <name : ID> "(" <params : ParamList> ")" <body : Block> => FunctionDecl{ name, params, body: Some(body)},
-  "int" <name : ID> "(" <params: ParamList> ")" ";" => FunctionDecl{name, params, body: None },
+  <s: Specifier?> <t: TypeName> <name : ID> "(" <params : ParamList> ")" <body : Block> => FunctionDecl{ name, params, body: Some(body), storage: s},
+  <s: Specifier?> <t: TypeName> <name : ID> "(" <params: ParamList> ")" ";" => FunctionDecl{name, params, body: None, storage: s},
 }
 
 ParamList : Vec<String> = {
   "void" => Vec::new(),
-  "int" <name : ID> => vec![name],
-  <mut pl : ParamList> "," "int" <name : ID> => {
+  <t: TypeName> <name : ID> => vec![name],
+  <mut pl : ParamList> "," <t: TypeName> <name : ID> => {
     pl.push(name);
     pl
   },
+}
+
+Specifier : StorageClass = {
+  "static" => StorageClass::Static,
+  "extern" => StorageClass::Extern,
+}
+
+TypeName : String = {
+  "int" => "int".to_string(),
 }
 
 ArgList : Vec<Expression> = {
@@ -151,4 +161,6 @@ Factor: Expression = {
     "!" <e: Factor> => Expression::Unary(UnaryOp::Not, Box::new(e)),
     "(" <e: Exp> ")" => e,
     <name: ID> "(" <args: ArgList> ")" => Expression::FunctionCall(name, args),
+    <name: ID> "(" ")" => Expression::FunctionCall(name, Vec::new()),
 };
+

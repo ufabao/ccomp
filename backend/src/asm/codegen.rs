@@ -1,115 +1,155 @@
 use std::collections::HashMap;
 
-use frontend::ast::typechecker::TypeInfo;
+use frontend::ast::typechecker::{Defined, IdentifierAttributes, TypeInfo};
 
-use super::assemblyast::ConditionalCode;
+use super::assemblyast::{ConditionalCode, Function, StaticVariable, TopLevel};
 use crate::asm::assemblyast::{BinaryOp, Instruction, Operand, Program, Register, UnaryOp};
 
 pub fn generate_assembly(prog: &Program, symbol_table: HashMap<String, TypeInfo>) -> String {
   let mut assembly = String::new();
 
-  for func in &prog.functions {
-    assembly.push_str(&format!(".globl {}\n", func.name));
-    assembly.push_str(&format!("{}:\n", func.name));
-    assembly.push_str("pushq %rbp\n");
-    assembly.push_str("movq %rsp, %rbp\n");
-
-    for instruction in &func.instructions {
-      match instruction {
-        Instruction::Mov(src, dest) => {
-          assembly.push_str(&format!(
-            "{} {}, {}\n",
-            "movl",
-            operand_to_string(&src, 4),
-            operand_to_string(&dest, 4)
-          ));
-        }
-        Instruction::Unary(op, val) => {
-          assembly.push_str(&format!(
-            "{} {}\n",
-            unary_op_to_string(&op),
-            operand_to_string(&val, 4)
-          ));
-        }
-        Instruction::AllocateStack(n) => {
-          assembly.push_str(&format!("subq ${}, %rsp\n", n));
-        }
-        Instruction::Return => {
-          // Add function epilogue before each return
-          assembly.push_str("movq %rbp, %rsp\n");
-          assembly.push_str("popq %rbp\n");
-          assembly.push_str("ret\n");
-        }
-        Instruction::Binary(binary_op, operand, operand1) => {
-          assembly.push_str(&format!(
-            "{} {}, {}\n",
-            match binary_op {
-              BinaryOp::Add => "addl",
-              BinaryOp::Sub => "subl",
-              BinaryOp::Mul => "imull",
-              _ => todo!(),
-            },
-            operand_to_string(&operand, 4),
-            operand_to_string(&operand1, 4)
-          ));
-        }
-        Instruction::IDiv(operand) => {
-          assembly.push_str(&format!("idivl {}\n", operand_to_string(&operand, 4)));
-        }
-        Instruction::Cdq => {
-          assembly.push_str("cdq\n");
-        }
-        Instruction::Cmp(operand1, operand2) => {
-          assembly.push_str(&format!(
-            "cmpl {}, {}\n",
-            operand_to_string(&operand1, 4),
-            operand_to_string(&operand2, 4)
-          ));
-        }
-        Instruction::Jmp(label) => {
-          assembly.push_str(&format!("jmp .L{}\n", label));
-        }
-        Instruction::JmpCC(cc, label) => {
-          assembly.push_str(&format!("j{} .L{}\n", cond_to_string(*cc), label));
-        }
-        Instruction::SetCC(cc, operand) => {
-          assembly.push_str(&format!(
-            "set{} {}\n",
-            cond_to_string(*cc),
-            operand_to_string(&operand, 1)
-          ));
-        }
-        Instruction::Label(label) => {
-          assembly.push_str(&format!(".L{}:\n", label));
-        }
-        Instruction::Call(name) => {
-          let plt_name = match symbol_table.get(name).unwrap() {
-            TypeInfo::FunType(_, true) => name,
-            TypeInfo::FunType(_, false) => &format!("{}@PLT", name),
-            _ => unreachable!(),
-          };
-          assembly.push_str(&format!("call {}\n", plt_name));
-        }
-        Instruction::DeAllocateStack(n) => {
-          assembly.push_str(&format!("addq ${}, %rsp\n", n));
-        }
-        Instruction::Push(operand) => {
-          assembly.push_str(&format!("pushq {}\n", operand_to_string(&operand, 8)));
-        }
+  for top_level in &prog.top_level {
+    match top_level {
+      TopLevel::Function(func) => {
+        generate_function(func, &symbol_table, &mut assembly);
+      }
+      TopLevel::StaticVariable(var) => {
+        generate_static_variable(var, &mut assembly);
       }
     }
+  }
+  assembly.push_str(&format!(r#".section .note.GNU-stack,"",@progbits"#));
+  assembly.push('\n');
+  assembly
+}
 
-    // Only add function epilogue if the last instruction wasn't a Return
-    if let Some(last_instruction) = func.instructions.last() {
-      if !matches!(last_instruction, Instruction::Return) {
+fn generate_function(
+  func: &Function,
+  symbol_table: &HashMap<String, TypeInfo>,
+  assembly: &mut String,
+) {
+  if func.global || func.name == "main" {
+    assembly.push_str(&format!(".globl {}\n", func.name));
+  }
+  assembly.push_str(&format!("{}:\n", func.name));
+  assembly.push_str(".text\n");
+  assembly.push_str("pushq %rbp\n");
+  assembly.push_str("movq %rsp, %rbp\n");
+
+  for instruction in &func.instructions {
+    match instruction {
+      Instruction::Mov(src, dest) => {
+        assembly.push_str(&format!(
+          "{} {}, {}\n",
+          "movl",
+          operand_to_string(&src, 4),
+          operand_to_string(&dest, 4)
+        ));
+      }
+      Instruction::Unary(op, val) => {
+        assembly.push_str(&format!(
+          "{} {}\n",
+          unary_op_to_string(&op),
+          operand_to_string(&val, 4)
+        ));
+      }
+      Instruction::AllocateStack(n) => {
+        assembly.push_str(&format!("subq ${}, %rsp\n", n));
+      }
+      Instruction::Return => {
+        // Add function epilogue before each return
         assembly.push_str("movq %rbp, %rsp\n");
         assembly.push_str("popq %rbp\n");
         assembly.push_str("ret\n");
       }
+      Instruction::Binary(binary_op, operand, operand1) => {
+        assembly.push_str(&format!(
+          "{} {}, {}\n",
+          match binary_op {
+            BinaryOp::Add => "addl",
+            BinaryOp::Sub => "subl",
+            BinaryOp::Mul => "imull",
+            _ => todo!(),
+          },
+          operand_to_string(&operand, 4),
+          operand_to_string(&operand1, 4)
+        ));
+      }
+      Instruction::IDiv(operand) => {
+        assembly.push_str(&format!("idivl {}\n", operand_to_string(&operand, 4)));
+      }
+      Instruction::Cdq => {
+        assembly.push_str("cdq\n");
+      }
+      Instruction::Cmp(operand1, operand2) => {
+        assembly.push_str(&format!(
+          "cmpl {}, {}\n",
+          operand_to_string(&operand1, 4),
+          operand_to_string(&operand2, 4)
+        ));
+      }
+      Instruction::Jmp(label) => {
+        assembly.push_str(&format!("jmp .L{}\n", label));
+      }
+      Instruction::JmpCC(cc, label) => {
+        assembly.push_str(&format!("j{} .L{}\n", cond_to_string(*cc), label));
+      }
+      Instruction::SetCC(cc, operand) => {
+        assembly.push_str(&format!(
+          "set{} {}\n",
+          cond_to_string(*cc),
+          operand_to_string(&operand, 1)
+        ));
+      }
+      Instruction::Label(label) => {
+        assembly.push_str(&format!(".L{}:\n", label));
+      }
+      Instruction::Call(name) => {
+        let plt_name = match symbol_table.get(name).unwrap().attrs {
+          IdentifierAttributes::FunAttr(_, global, _) => match global {
+            Defined::Yes => name.clone(),
+            Defined::No => format!("{}@PLT", name),
+          },
+          _ => unreachable!(),
+        };
+        assembly.push_str(&format!("call {}\n", plt_name));
+      }
+      Instruction::DeAllocateStack(n) => {
+        assembly.push_str(&format!("addq ${}, %rsp\n", n));
+      }
+      Instruction::Push(operand) => {
+        assembly.push_str(&format!("pushq {}\n", operand_to_string(&operand, 8)));
+      }
     }
   }
 
-  assembly
+  // Only add function epilogue if the last instruction wasn't a Return
+  if let Some(last_instruction) = func.instructions.last() {
+    if !matches!(last_instruction, Instruction::Return) {
+      assembly.push_str("movq %rbp, %rsp\n");
+      assembly.push_str("popq %rbp\n");
+      assembly.push_str("ret\n");
+    }
+  }
+}
+
+fn generate_static_variable(var: &StaticVariable, assembly: &mut String) {
+  {
+    if var.global {
+      assembly.push_str(&format!(".globl {}\n", var.name));
+    }
+    if var.value != 0 {
+      assembly.push_str(".data\n");
+      assembly.push_str(".align 4\n");
+      assembly.push_str(&format!("{}:\n", var.name));
+      assembly.push_str(&format!(".long {}\n", var.value));
+    } else {
+      assembly.push_str(".bss\n");
+      assembly.push_str(".align 4\n");
+      assembly.push_str(&format!("{}:\n", var.name));
+      assembly.push_str(".zero 4\n");
+    }
+  }
 }
 
 fn operand_to_string(operand: &Operand, size: usize) -> String {
@@ -155,6 +195,7 @@ fn operand_to_string(operand: &Operand, size: usize) -> String {
     },
     Operand::Stack(offset) => format!("{}(%rbp)", offset),
     Operand::Imm(imm) => format!("${}", imm),
+    Operand::Data(data) => format!("{}(%rip)", data),
     Operand::Pseudo(_) => unreachable!(),
   }
 }

@@ -3,38 +3,21 @@ pub mod nameresolution;
 pub mod typechecker;
 
 pub trait Visitor {
-  type Program;
-  type FunctionDecl;
-  type VariableDecl;
-  type BlockItem;
-  type Declaration;
-  type Statement;
-  type ForInit;
-  type Expression;
-
-  fn visit_program(&mut self, program: &Program) -> Self::Program;
-  fn visit_function_decl(&mut self, function: &FunctionDecl) -> Self::FunctionDecl;
-  fn visit_variable_decl(&mut self, variable: &VariableDecl) -> Self::VariableDecl;
-  fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::BlockItem;
-  fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Declaration;
-  fn visit_statement(&mut self, statement: &Statement) -> Self::Statement;
-  fn visit_for_init(&mut self, statement: &ForInit) -> Self::ForInit;
-  fn visit_expression(&mut self, expression: &Expression) -> Self::Expression;
-}
-
-pub trait Accept {
-  fn accept<V: Visitor>(&self, visitor: &mut V) -> <V as Visitor>::Program;
-}
-
-impl Accept for Program {
-  fn accept<V: Visitor>(&self, visitor: &mut V) -> <V as Visitor>::Program {
-    visitor.visit_program(self)
-  }
+  type Output;
+  fn visit_program(&mut self, program: &Program) -> Self::Output;
+  fn visit_function_decl(&mut self, function: &FunctionDecl) -> Self::Output;
+  fn visit_variable_decl(&mut self, variable: &VariableDecl) -> Self::Output;
+  fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::Output;
+  fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Output;
+  fn visit_statement(&mut self, statement: &Statement) -> Self::Output;
+  fn visit_for_init(&mut self, for_init: &ForInit) -> Self::Output;
+  fn visit_expression(&mut self, expression: &Expression) -> Self::Output;
+  fn visit_expression_base(&mut self, expression: &Expression) -> Self::Output;
 }
 
 #[derive(Debug, Clone)]
-pub enum Program {
-  Program(Vec<Declaration>),
+pub struct Program {
+  pub declarations: Vec<Declaration>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +31,7 @@ pub struct FunctionDecl {
   pub name: String,
   pub params: Vec<String>,
   pub body: Option<Block>,
+  pub typ: Type,
   pub storage: Option<StorageClass>,
 }
 
@@ -55,7 +39,27 @@ pub struct FunctionDecl {
 pub struct VariableDecl {
   pub name: String,
   pub value: Option<Expression>,
+  pub typ: Type,
   pub storage: Option<StorageClass>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Expression {
+  Const(Const),
+  Var(String),
+  Cast(Type, Box<Expression>),
+  Unary(UnaryOp, Box<Expression>),
+  Binary(BinaryOp, Box<Expression>, Box<Expression>),
+  Assignment(Box<Expression>, Box<Expression>),
+  Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
+  FunctionCall(String, Vec<Expression>),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Type {
+  Int,
+  Long,
+  FunType(Vec<Type>, Box<Type>),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -100,15 +104,10 @@ pub enum ForInit {
   Expression(Option<Expression>),
 }
 
-#[derive(Debug, Clone)]
-pub enum Expression {
+#[derive(Debug, Clone, Copy)]
+pub enum Const {
   Int(i32),
-  Var(String),
-  Unary(UnaryOp, Box<Expression>),
-  Binary(BinaryOp, Box<Expression>, Box<Expression>),
-  Assignment(Box<Expression>, Box<Expression>),
-  Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
-  FunctionCall(String, Vec<Expression>),
+  Long(i64),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -134,12 +133,4 @@ pub enum BinaryOp {
   LessOrEqual,
   GreaterThan,
   GreaterOrEqual,
-}
-
-impl FromIterator<BlockItem> for Block {
-  fn from_iter<I: IntoIterator<Item = BlockItem>>(iter: I) -> Self {
-    Block {
-      items: iter.into_iter().collect(),
-    }
-  }
 }

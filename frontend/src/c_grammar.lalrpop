@@ -9,6 +9,7 @@ use crate::ast::{
     Program,
     Statement,
     StorageClass,
+    Type,
     UnaryOp,
     VariableDecl,
 };
@@ -31,15 +32,33 @@ VariableDeclaration : VariableDecl = {
 }
 
 FunctionDeclaration : FunctionDecl = {
-  <s: Specifier?> <t: TypeName> <name : ID> "(" <params : ParamList> ")" <body : Block> => FunctionDecl{ name, params, body: Some(body), storage: s},
-  <s: Specifier?> <t: TypeName> <name : ID> "(" <params: ParamList> ")" ";" => FunctionDecl{name, params, body: None, storage: s},
+  <s: Specifier?> <t: TypeName> <name : ID> "(" <params : ParamList> ")" <body : Block> => {
+    let mut types = Vec<Type>::new();
+    let mut ids = Vec<String>::new();
+    for (typ, nam) in &params {
+      types.push(typ);
+      ids.push(nam);
+    }
+    let funtype = Type::FunType(types, t);
+    FunctionDecl{ name, ids, body: Some(body), typ: funtype, storage: s}
+  },
+  <s: Specifier?> <t: TypeName> <name : ID> "(" <params: ParamList> ")" ";" => {
+    let mut types = Vec<Type>::new();
+    let mut ids = Vec<String>::new();
+    for (typ, nam) in &params {
+      types.push(typ);
+      ids.push(nam);
+    }
+    let funtype = Type::FunType(types, t);
+    FunctionDecl{ name, params: ids, body: None, typ: funtype, storage: s}
+  }
 }
 
-ParamList : Vec<String> = {
+ParamList : Vec<(Type, String)> = {
   "void" => Vec::new(),
-  <t: TypeName> <name : ID> => vec![name],
+  <t: TypeName> <name : ID> => vec![(t, name)],
   <mut pl : ParamList> "," <t: TypeName> <name : ID> => {
-    pl.push(name);
+    pl.push((t, name));
     pl
   },
 }
@@ -49,8 +68,9 @@ Specifier : StorageClass = {
   "extern" => StorageClass::Extern,
 }
 
-TypeName : String = {
-  "int" => "int".to_string(),
+TypeName : Type = {
+  "int" => Type::Int,
+  "long" => Type::Long,
 }
 
 ArgList : Vec<Expression> = {
@@ -154,7 +174,9 @@ Exp: Expression = {
 };
 
 Factor: Expression = {
-    r"[0-9]+" => Expression::Int(i32::from_str(<>).unwrap()),
+    r"[0-9]+" => Expression::Const(Const::Int(i32::from_str(<>).unwrap())),
+    r"[0-9]+L" => Expression::Const(Const::Long(i64::from_str(<>.unwrap()))),
+    "(" <t: TypeName> ")" <f: Factor> => Expression::Cast(t, f),
     <name: ID> => Expression::Var(name),
     "-" <e: Factor> => Expression::Unary(UnaryOp::Neg, Box::new(e)),
     "~" <e: Factor> => Expression::Unary(UnaryOp::Complement, Box::new(e)),

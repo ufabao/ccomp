@@ -2,6 +2,7 @@ use crate::ast::{
     BinaryOp,
     Block, 
     BlockItem,
+    Const,
     Declaration,
     Expression,
     ForInit,
@@ -17,48 +18,101 @@ use std::str::FromStr;
 
 grammar;
 
-pub Program: Program = {
-    <d: Declaration+> => Program::Program(d),
+
+match {
+    // Ignore whitespace and comments
+    r"\s*" => {},
+    r"//[^\n\r]*[\n\r]*" => {},
+    r"/\*([^*]|\*[^/])*\*/" => {},
+    
+    // Identifiers and literals
+    r"[a-zA-Z][a-zA-Z0-9_]*" => ID,  // This will match your identifiers
+    r"[0-9]+" => NUM,               // This will match your integer literals
+    r"[0-9]+[lL]" => LONG,            // This will match your long literals
+    
+    // Keywords
+    "static" => "static",
+    "extern" => "extern",
+    "if" => "if",
+    "else" => "else",
+    "while" => "while",
+    "for" => "for",
+    "break" => "break",
+    "continue" => "continue",
+    "return" => "return",
+    "int" => "int",
+    "long" => "long",
+    "void" => "void",
+    
+    // Operators
+    "+" => "+",
+    "-" => "-",
+    "*" => "*",
+    "/" => "/",
+    "%" => "%",
+    "=" => "=",
+    "==" => "==",
+    "!=" => "!=",
+    "<" => "<",
+    "<=" => "<=",
+    ">" => ">",
+    ">=" => ">=",
+    "&&" => "&&",
+    "||" => "||",
+    "!" => "!",
+    "~" => "~",
+    
+    // Punctuation
+    "(" => "(",
+    ")" => ")",
+    "{" => "{",
+    "}" => "}",
+    ";" => ";",
+    "," => ",",
+}
+
+pub Program: Program<Expression> = {
+    <d: Declaration+> => Program{declarations: d },
 };
 
-Declaration: Declaration = {
+Declaration: Declaration<Expression> = {
   <v : VariableDeclaration> => Declaration::VarDeclaration(v),
   <f : FunctionDeclaration> => Declaration::FuncDeclaration(f),
 }
 
-VariableDeclaration : VariableDecl = {
-  <s: Specifier?> <t: TypeName> <name : ID> "=" <e : Exp> ";" => VariableDecl { name: name, value: Some(e), storage: s},
-  <s: Specifier?> <t: TypeName> <name: ID> ";" => VariableDecl {name: name, value: None, storage: s},
+VariableDeclaration : VariableDecl<Expression> = {
+  <s: Specifier?> <t: TypeName> <name : ID> "=" <e : Exp> ";" => VariableDecl { name: name.to_string(), value: Some(e), typ: t, storage: s},
+  <s: Specifier?> <t: TypeName> <name: ID> ";" => VariableDecl {name: name.to_string(), value: None, typ: t, storage: s},
 }
 
-FunctionDeclaration : FunctionDecl = {
+FunctionDeclaration : FunctionDecl<Expression> = {
   <s: Specifier?> <t: TypeName> <name : ID> "(" <params : ParamList> ")" <body : Block> => {
-    let mut types = Vec<Type>::new();
-    let mut ids = Vec<String>::new();
+    let mut types = Vec::<Type>::new();
+    let mut ids = Vec::<String>::new();
     for (typ, nam) in &params {
-      types.push(typ);
-      ids.push(nam);
+      types.push(typ.clone());
+      ids.push(nam.clone());
     }
-    let funtype = Type::FunType(types, t);
-    FunctionDecl{ name, ids, body: Some(body), typ: funtype, storage: s}
+    let funtype = Type::FunType(types, Box::new(t));
+    FunctionDecl{ name: name.to_string(), params: ids, body: Some(body), typ: funtype, storage: s}
   },
   <s: Specifier?> <t: TypeName> <name : ID> "(" <params: ParamList> ")" ";" => {
-    let mut types = Vec<Type>::new();
-    let mut ids = Vec<String>::new();
+    let mut types = Vec::<Type>::new();
+    let mut ids = Vec::<String>::new();
     for (typ, nam) in &params {
-      types.push(typ);
-      ids.push(nam);
+      types.push(typ.clone());
+      ids.push(nam.clone());
     }
-    let funtype = Type::FunType(types, t);
-    FunctionDecl{ name, params: ids, body: None, typ: funtype, storage: s}
+    let funtype = Type::FunType(types, Box::new(t));
+    FunctionDecl{ name: name.to_string(), params: ids, body: None, typ: funtype, storage: s}
   }
 }
 
 ParamList : Vec<(Type, String)> = {
   "void" => Vec::new(),
-  <t: TypeName> <name : ID> => vec![(t, name)],
+  <t: TypeName> <name : ID> => vec![(t, name.to_string())],
   <mut pl : ParamList> "," <t: TypeName> <name : ID> => {
-    pl.push((t, name));
+    pl.push((t, name.to_string()));
     pl
   },
 }
@@ -82,16 +136,12 @@ ArgList : Vec<Expression> = {
   },
 }
 
-ID: String = {
-    <s:r"[a-zA-Z][a-zA-Z0-9_]*"> => s.to_owned(),
-}
 
-
-Block: Block = {
+Block: Block<Expression> = {
   "{" <b : BlockItems> "}" => Block{ items: b },
 }
 
-BlockItems: Vec<BlockItem> = {
+BlockItems: Vec<BlockItem<Expression>> = {
   <b: BlockItem> => vec![b],
   <mut v: BlockItems> <b: BlockItem> => {
     v.push(b);
@@ -99,18 +149,18 @@ BlockItems: Vec<BlockItem> = {
   }
 }
 
-BlockItem: BlockItem = {
+BlockItem: BlockItem<Expression> = {
   <s: Statement> => BlockItem::Statement(<>),
   <d: Declaration> => BlockItem::Declaration(<>),
 }
 
-ForInit: ForInit = {
+ForInit: ForInit<Expression> = {
   <v : VariableDeclaration> => ForInit::Declaration(v),
   //<e: Exp?> => ForInit::Expression(e),
 }
 
 
-Statement: Statement = {
+Statement: Statement<Expression> = {
     #[precedence(level="0")]
     "return" <e: Exp> ";" => Statement::Return(e),
     <e: Exp> ";" => Statement::Expression(e),
@@ -137,10 +187,6 @@ Exp: Expression = {
     #[assoc(side="right")]
     <e1: Exp> "=" <e2: Exp> => Expression::Assignment(Box::new(e1), Box::new(e2)),
 
-    #[precedence(level="100")]
-    #[assoc(side="right")]
-    <e1 : Exp> "?" <e2 : Exp> ":" <e3 : Exp> => Expression::Conditional(Box::new(e1), Box::new(e2), Box::new(e3)),
-    
     #[precedence(level="95")]
     #[assoc(side="left")]
     <e1: Exp> "||" <e2:Exp> => Expression::Binary(BinaryOp::Or, Box::new(e1), Box::new(e2)),
@@ -174,15 +220,15 @@ Exp: Expression = {
 };
 
 Factor: Expression = {
-    r"[0-9]+" => Expression::Const(Const::Int(i32::from_str(<>).unwrap())),
-    r"[0-9]+L" => Expression::Const(Const::Long(i64::from_str(<>.unwrap()))),
-    "(" <t: TypeName> ")" <f: Factor> => Expression::Cast(t, f),
-    <name: ID> => Expression::Var(name),
+    <NUM> => Expression::Const(Const::Int(i32::from_str(<>).unwrap())),
+    <LONG> => Expression::Const(Const::Long(i64::from_str(&<>[0..<>.len()-1]).unwrap())),
+    "(" <t: TypeName> ")" <f: Factor> => Expression::Cast(t, Box::new(f)),
+    <name: ID> => Expression::Var(name.to_string()),
     "-" <e: Factor> => Expression::Unary(UnaryOp::Neg, Box::new(e)),
     "~" <e: Factor> => Expression::Unary(UnaryOp::Complement, Box::new(e)),
     "!" <e: Factor> => Expression::Unary(UnaryOp::Not, Box::new(e)),
     "(" <e: Exp> ")" => e,
-    <name: ID> "(" <args: ArgList> ")" => Expression::FunctionCall(name, args),
-    <name: ID> "(" ")" => Expression::FunctionCall(name, Vec::new()),
+    <name: ID> "(" <args: ArgList> ")" => Expression::FunctionCall(name.to_string(), args),
+    <name: ID> "(" ")" => Expression::FunctionCall(name.to_string(), Vec::new()),
 };
 

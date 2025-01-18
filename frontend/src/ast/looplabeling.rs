@@ -32,29 +32,31 @@ impl LoopLabeler {
   }
 }
 
-impl Visitor for LoopLabeler {
-  type Program = Result<Program, String>;
-  type FunctionDecl = Result<FunctionDecl, String>;
-  type VariableDecl = Result<VariableDecl, String>;
-  type BlockItem = Result<BlockItem, String>;
-  type Declaration = Result<Declaration, String>;
-  type Statement = Result<Statement, String>;
-  type ForInit = Result<ForInit, String>;
-  type Expression = Result<Expression, String>;
+impl Visitor<TypedExpression> for LoopLabeler {
+  type Program = Result<Program<TypedExpression>, String>;
+  type FunctionDecl = Result<FunctionDecl<TypedExpression>, String>;
+  type VariableDecl = Result<VariableDecl<TypedExpression>, String>;
+  type BlockItem = Result<BlockItem<TypedExpression>, String>;
+  type Declaration = Result<Declaration<TypedExpression>, String>;
+  type Statement = Result<Statement<TypedExpression>, String>;
+  type ForInit = Result<ForInit<TypedExpression>, String>;
+  type Expression = Result<TypedExpression, String>;
 
-  fn visit_program(&mut self, program: &Program) -> Self::Program {
-    match program {
-      Program::Program(functions) => {
-        let new_decls = functions
-          .iter()
-          .map(|decl| self.visit_declaration(decl))
-          .collect::<Result<Vec<_>, _>>()?;
-        Ok(Program::Program(new_decls))
-      }
-    }
+  fn visit_program(&mut self, program: &Program<TypedExpression>) -> Self::Program {
+    let new_decls = program
+      .declarations
+      .iter()
+      .map(|decl| self.visit_declaration(decl))
+      .collect::<Result<Vec<_>, _>>()?;
+    Ok(Program {
+      declarations: new_decls,
+    })
   }
 
-  fn visit_function_decl(&mut self, function: &FunctionDecl) -> Self::FunctionDecl {
+  fn visit_function_decl(
+    &mut self,
+    function: &FunctionDecl<TypedExpression>,
+  ) -> Self::FunctionDecl {
     let new_body = match function.body.as_ref() {
       Some(block) => Some(Block {
         items: block
@@ -69,11 +71,12 @@ impl Visitor for LoopLabeler {
       name: function.name.clone(),
       params: function.params.clone(),
       body: new_body,
+      typ: function.typ.clone(),
       storage: function.storage.clone(),
     })
   }
 
-  fn visit_block_item(&mut self, block_item: &BlockItem) -> Self::BlockItem {
+  fn visit_block_item(&mut self, block_item: &BlockItem<TypedExpression>) -> Self::BlockItem {
     match block_item {
       BlockItem::Statement(statement) => Ok(BlockItem::Statement(self.visit_statement(statement)?)),
       BlockItem::Declaration(declaration) => {
@@ -82,7 +85,7 @@ impl Visitor for LoopLabeler {
     }
   }
 
-  fn visit_declaration(&mut self, declaration: &Declaration) -> Self::Declaration {
+  fn visit_declaration(&mut self, declaration: &Declaration<TypedExpression>) -> Self::Declaration {
     match declaration {
       Declaration::FuncDeclaration(function) => Ok(Declaration::FuncDeclaration(
         self.visit_function_decl(function)?,
@@ -93,7 +96,7 @@ impl Visitor for LoopLabeler {
     }
   }
 
-  fn visit_statement(&mut self, statement: &Statement) -> Self::Statement {
+  fn visit_statement(&mut self, statement: &Statement<TypedExpression>) -> Self::Statement {
     match statement {
       Statement::While(condition, body, _) => {
         let label = self.label_loop("while");
@@ -166,7 +169,7 @@ impl Visitor for LoopLabeler {
     }
   }
 
-  fn visit_for_init(&mut self, init: &ForInit) -> Self::ForInit {
+  fn visit_for_init(&mut self, init: &ForInit<TypedExpression>) -> Self::ForInit {
     match init {
       ForInit::Declaration(declaration) => {
         Ok(ForInit::Declaration(self.visit_variable_decl(declaration)?))
@@ -183,39 +186,58 @@ impl Visitor for LoopLabeler {
     }
   }
 
-  fn visit_expression(&mut self, expression: &Expression) -> Self::Expression {
+  fn visit_expression(&mut self, expression: &TypedExpression) -> Self::Expression {
     match expression {
-      Expression::Binary(op, exp1, exp2) => {
+      TypedExpression::Binary(op, exp1, exp2, typ) => {
         let new_exp1 = self.visit_expression(exp1)?;
         let new_exp2 = self.visit_expression(exp2)?;
-        Ok(Expression::Binary(
+        Ok(TypedExpression::Binary(
           op.clone(),
           Box::new(new_exp1),
           Box::new(new_exp2),
+          typ.clone(),
         ))
       }
-      Expression::Unary(op, exp) => {
+      TypedExpression::Unary(op, exp, typ) => {
         let new_exp = self.visit_expression(exp)?;
-        Ok(Expression::Unary(op.clone(), Box::new(new_exp)))
+        Ok(TypedExpression::Unary(
+          op.clone(),
+          Box::new(new_exp),
+          typ.clone(),
+        ))
       }
-      Expression::Int(lit) => Ok(Expression::Int(*lit)),
-      Expression::Var(var) => Ok(Expression::Var(var.clone())),
-      Expression::Assignment(var, exp) => {
+      TypedExpression::Const(c, typ) => Ok(TypedExpression::Const(*c, typ.clone())),
+      TypedExpression::Var(var, typ) => Ok(TypedExpression::Var(var.clone(), typ.clone())),
+      TypedExpression::Cast(t, exp) => {
         let new_exp = self.visit_expression(exp)?;
-        Ok(Expression::Assignment(var.clone(), Box::new(new_exp)))
+        Ok(TypedExpression::Cast(t.clone(), Box::new(new_exp)))
       }
-      Expression::Conditional(_, _, _) => todo!(),
-      Expression::FunctionCall(name, vec) => {
+      TypedExpression::Assignment(var, exp, typ) => {
+        let new_exp = self.visit_expression(exp)?;
+        Ok(TypedExpression::Assignment(
+          var.clone(),
+          Box::new(new_exp),
+          typ.clone(),
+        ))
+      }
+      TypedExpression::FunctionCall(name, vec, typ) => {
         let new_vec = vec
           .iter()
           .map(|exp| self.visit_expression(exp))
           .collect::<Result<Vec<_>, _>>()?;
-        Ok(Expression::FunctionCall(name.clone(), new_vec))
+        Ok(TypedExpression::FunctionCall(
+          name.clone(),
+          new_vec,
+          typ.clone(),
+        ))
       }
     }
   }
 
-  fn visit_variable_decl(&mut self, variable: &VariableDecl) -> Self::VariableDecl {
+  fn visit_variable_decl(
+    &mut self,
+    variable: &VariableDecl<TypedExpression>,
+  ) -> Self::VariableDecl {
     let new_value = match variable.value.as_ref() {
       Some(value) => Some(self.visit_expression(&value)?),
       None => None,
@@ -223,6 +245,7 @@ impl Visitor for LoopLabeler {
     Ok(VariableDecl {
       name: variable.name.clone(),
       value: new_value,
+      typ: variable.typ.clone(),
       storage: variable.storage.clone(),
     })
   }

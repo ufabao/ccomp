@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
-use frontend::ast::typechecker::{Defined, IdentifierAttributes, TypeInfo};
+use frontend::ast::typechecker::{Defined, IdentifierAttributes};
 
-use super::assemblyast::{ConditionalCode, Function, StaticVariable, TopLevel};
+use super::{
+  assemblyast::{AssemblyType, ConditionalCode, Function, StaticVariable, TopLevel},
+  tacky_to_asm::BackendSymbols,
+};
 use crate::asm::assemblyast::{BinaryOp, Instruction, Operand, Program, Register, UnaryOp};
 
-pub fn generate_assembly(prog: &Program, symbol_table: HashMap<String, TypeInfo>) -> String {
+pub fn generate_assembly(prog: &Program, symbol_table: HashMap<String, BackendSymbols>) -> String {
   let mut assembly = String::new();
 
   for top_level in &prog.top_level {
@@ -25,7 +28,7 @@ pub fn generate_assembly(prog: &Program, symbol_table: HashMap<String, TypeInfo>
 
 fn generate_function(
   func: &Function,
-  symbol_table: &HashMap<String, TypeInfo>,
+  symbol_table: &HashMap<String, BackendSymbols>,
   assembly: &mut String,
 ) {
   if func.global || func.name == "main" {
@@ -38,23 +41,29 @@ fn generate_function(
 
   for instruction in &func.instructions {
     match instruction {
-      Instruction::Mov(src, dest) => {
+      Instruction::Mov(typ, src, dest) => {
+        let size = get_type_size(typ);
         assembly.push_str(&format!(
-          "{} {}, {}\n",
-          "movl",
-          operand_to_string(&src, 4),
-          operand_to_string(&dest, 4)
+          "mov{} {}, {}\n",
+          get_type_prefix(typ),
+          operand_to_string(&src, size),
+          operand_to_string(&dest, size)
         ));
       }
-      Instruction::Unary(op, val) => {
+      Instruction::MovSx(src, dst) => {
         assembly.push_str(&format!(
-          "{} {}\n",
+          "movslq {}, {}",
+          operand_to_string(src, 4),
+          operand_to_string(dst, 8)
+        ));
+      }
+      Instruction::Unary(op, typ, val) => {
+        assembly.push_str(&format!(
+          "{}{} {}\n",
           unary_op_to_string(&op),
+          get_type_prefix(typ),
           operand_to_string(&val, 4)
         ));
-      }
-      Instruction::AllocateStack(n) => {
-        assembly.push_str(&format!("subq ${}, %rsp\n", n));
       }
       Instruction::Return => {
         // Add function epilogue before each return
@@ -62,30 +71,39 @@ fn generate_function(
         assembly.push_str("popq %rbp\n");
         assembly.push_str("ret\n");
       }
-      Instruction::Binary(binary_op, operand, operand1) => {
+      Instruction::Binary(binary_op, typ, operand, operand1) => {
+        let size = get_type_size(typ);
         assembly.push_str(&format!(
-          "{} {}, {}\n",
+          "{}{} {}, {}\n",
           match binary_op {
-            BinaryOp::Add => "addl",
-            BinaryOp::Sub => "subl",
-            BinaryOp::Mul => "imull",
+            BinaryOp::Add => "add",
+            BinaryOp::Sub => "sub",
+            BinaryOp::Mul => "imul",
             _ => todo!(),
           },
-          operand_to_string(&operand, 4),
-          operand_to_string(&operand1, 4)
+          get_type_prefix(typ),
+          operand_to_string(&operand, size),
+          operand_to_string(&operand1, size)
         ));
       }
-      Instruction::IDiv(operand) => {
-        assembly.push_str(&format!("idivl {}\n", operand_to_string(&operand, 4)));
-      }
-      Instruction::Cdq => {
-        assembly.push_str("cdq\n");
-      }
-      Instruction::Cmp(operand1, operand2) => {
+      Instruction::IDiv(typ, operand) => {
         assembly.push_str(&format!(
-          "cmpl {}, {}\n",
-          operand_to_string(&operand1, 4),
-          operand_to_string(&operand2, 4)
+          "idiv{} {}\n",
+          get_type_prefix(typ),
+          operand_to_string(&operand, 4)
+        ));
+      }
+      Instruction::Cdq(typ) => match typ {
+        AssemblyType::LongWord => assembly.push_str("cdq\n"),
+        AssemblyType::QuadWord => assembly.push_str("cdo\n"),
+      },
+      Instruction::Cmp(typ, operand1, operand2) => {
+        let size = get_type_size(typ);
+        assembly.push_str(&format!(
+          "cmp{} {}, {}\n",
+          get_type_prefix(typ),
+          operand_to_string(&operand1, size),
+          operand_to_string(&operand2, size)
         ));
       }
       Instruction::Jmp(label) => {
@@ -105,17 +123,12 @@ fn generate_function(
         assembly.push_str(&format!(".L{}:\n", label));
       }
       Instruction::Call(name) => {
-        let plt_name = match symbol_table.get(name).unwrap().attrs {
-          IdentifierAttributes::FunAttr(_, global, _) => match global {
-            Defined::Yes => name.clone(),
-            Defined::No => format!("{}@PLT", name),
-          },
+        let plt_name = match symbol_table.get(name).unwrap() {
+          BackendSymbols::FunEntry(true) => name.clone(),
+          BackendSymbols::FunEntry(false) => format!("{}@PLT", name),
           _ => unreachable!(),
         };
         assembly.push_str(&format!("call {}\n", plt_name));
-      }
-      Instruction::DeAllocateStack(n) => {
-        assembly.push_str(&format!("addq ${}, %rsp\n", n));
       }
       Instruction::Push(operand) => {
         assembly.push_str(&format!("pushq {}\n", operand_to_string(&operand, 8)));
@@ -138,21 +151,36 @@ fn generate_static_variable(var: &StaticVariable, assembly: &mut String) {
     if var.global {
       assembly.push_str(&format!(".globl {}\n", var.name));
     }
-    if var.value != 0 {
-      assembly.push_str(".data\n");
-      assembly.push_str(".align 4\n");
-      assembly.push_str(&format!("{}:\n", var.name));
-      assembly.push_str(&format!(".long {}\n", var.value));
-    } else {
-      assembly.push_str(".bss\n");
-      assembly.push_str(".align 4\n");
-      assembly.push_str(&format!("{}:\n", var.name));
-      assembly.push_str(".zero 4\n");
+    match var.init {
+      frontend::ast::typechecker::StaticInit::Int(0) => {
+        assembly.push_str(".bss\n");
+        assembly.push_str(".align 4\n");
+        assembly.push_str(&format!("{}:\n", var.name));
+        assembly.push_str(".zero 4\n");
+      }
+      frontend::ast::typechecker::StaticInit::Int(n) => {
+        assembly.push_str(".data\n");
+        assembly.push_str(".align 4\n");
+        assembly.push_str(&format!("{}:\n", var.name));
+        assembly.push_str(&format!(".long {}\n", n));
+      }
+      frontend::ast::typechecker::StaticInit::Long(0) => {
+        assembly.push_str(".bss\n");
+        assembly.push_str(".align 8\n");
+        assembly.push_str(&format!("{}:\n", var.name));
+        assembly.push_str(".zero 8\n");
+      }
+      frontend::ast::typechecker::StaticInit::Long(n) => {
+        assembly.push_str(".data\n");
+        assembly.push_str(".align 8\n");
+        assembly.push_str(&format!("{}:\n", var.name));
+        assembly.push_str(&format!(".quad {}\n", n));
+      }
     }
   }
 }
 
-fn operand_to_string(operand: &Operand, size: usize) -> String {
+fn operand_to_string(operand: &Operand, size: i32) -> String {
   match operand {
     Operand::Reg(reg) => match (reg, size) {
       (Register::Ax, 1) => "%al".to_string(),
@@ -191,6 +219,8 @@ fn operand_to_string(operand: &Operand, size: usize) -> String {
       (Register::R11, 4) => "%r11d".to_string(),
       (Register::R11, 8) => "%r11".to_string(),
 
+      (Register::Sp, _) => "%rsp".to_string(),
+
       _ => todo!(),
     },
     Operand::Stack(offset) => format!("{}(%rbp)", offset),
@@ -202,9 +232,9 @@ fn operand_to_string(operand: &Operand, size: usize) -> String {
 
 fn unary_op_to_string(op: &UnaryOp) -> String {
   match op {
-    UnaryOp::Neg => "negl",
+    UnaryOp::Neg => "neg",
     UnaryOp::PrefixDec => "decl",
-    UnaryOp::Complement => "notl",
+    UnaryOp::Complement => "not",
     _ => todo!(),
   }
   .to_string()
@@ -220,4 +250,18 @@ fn cond_to_string(cc: ConditionalCode) -> String {
     ConditionalCode::LE => "le",
   }
   .to_string()
+}
+
+fn get_type_prefix(typ: &AssemblyType) -> String {
+  match typ {
+    AssemblyType::LongWord => "l".to_string(),
+    AssemblyType::QuadWord => "q".to_string(),
+  }
+}
+
+fn get_type_size(typ: &AssemblyType) -> i32 {
+  match typ {
+    AssemblyType::LongWord => 4,
+    AssemblyType::QuadWord => 8,
+  }
 }

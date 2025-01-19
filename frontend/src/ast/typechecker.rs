@@ -208,7 +208,7 @@ impl TypeChecker {
     &mut self,
     var: &VariableDecl<Expression>,
   ) -> Result<VariableDecl<TypedExpression>, String> {
-    let initial_value = self.get_initial_value(&var.value)?;
+    let initial_value = self.get_initial_value(&var)?;
 
     self.add_symbol(
       &var.name,
@@ -229,13 +229,17 @@ impl TypeChecker {
     })
   }
 
-  fn get_initial_value(&self, value: &Option<Expression>) -> Result<InitialValue, String> {
-    match value {
+  fn get_initial_value(&self, var: &VariableDecl<Expression>) -> Result<InitialValue, String> {
+    match var.value {
       Some(Expression::Const(c)) => Ok(InitialValue::Initial(match c {
-        Const::Int(n) => StaticInit::Int(*n),
-        Const::Long(n) => StaticInit::Long(*n),
+        Const::Int(n) => StaticInit::Int(n),
+        Const::Long(n) => StaticInit::Long(n),
       })),
-      None => Ok(InitialValue::NoInitializer),
+      None => match var.typ {
+        Type::Int => Ok(InitialValue::Initial(StaticInit::Int(0))),
+        Type::Long => Ok(InitialValue::Initial(StaticInit::Long(0))),
+        _ => unreachable!(),
+      },
       _ => Err("Non-constant initializer".to_string()),
     }
   }

@@ -1,14 +1,14 @@
 extern crate frontend;
 pub mod asm;
 pub mod tacky;
-use frontend::ast::typechecker::TypeInfo;
+use asm::tac_to_asm;
+use frontend::ast::{typechecker::TypeInfo, Program, TypedExpression};
 use std::collections::HashMap;
 
-use frontend::ast;
 use tacky::generate_tac;
 
 pub fn generate_code(
-  ast: &ast::Program,
+  ast: &Program<TypedExpression>,
   symbol_table: HashMap<String, TypeInfo>,
 ) -> Result<String, String> {
   //let tac = TacBuilder::new().build_program(ast)?;
@@ -16,9 +16,9 @@ pub fn generate_code(
   //let static_symbols = convert_symbols_to_tacky(&symbol_table);
   //dbg!(&static_symbols);
 
-  let tac = generate_tac(ast, &symbol_table)?;
+  let (tac, symbol_table) = generate_tac(ast, symbol_table)?;
   //dbg!(&tac);
-  let asm = asm::tacky_to_asm_ast(&tac);
+  let (asm, symbol_table) = tac_to_asm(&tac, symbol_table);
   //dbg!(&asm);
   let mut passes = asm::assemblyast::ASMPasses::new(&symbol_table);
   let replaced_asm = passes.replace_pseudo(&asm);

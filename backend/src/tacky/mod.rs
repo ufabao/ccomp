@@ -1,108 +1,139 @@
+use super::*;
 use frontend::ast::{
   self,
-  typechecker::{IdentifierAttributes, TypeInfo},
-  BlockItem, Declaration, Expression, ForInit, FunctionDecl, Program, Statement, VariableDecl,
+  typechecker::{IdentifierAttributes, StaticInit, TypeInfo},
+  Const, Type,
 };
 use std::collections::HashMap;
 
+pub type Program = frontend::ast::Program<TypedExpression>;
+pub type Declaration = frontend::ast::Declaration<TypedExpression>;
+pub type BlockItem = frontend::ast::BlockItem<TypedExpression>;
+pub type FunctionDecl = frontend::ast::FunctionDecl<TypedExpression>;
+pub type VariableDecl = frontend::ast::VariableDecl<TypedExpression>;
+pub type Statement = frontend::ast::Statement<TypedExpression>;
+pub type ForInit = frontend::ast::ForInit<TypedExpression>;
+pub type Expression = frontend::ast::TypedExpression;
+
+type SymbolTable = HashMap<String, TypeInfo>;
+
+// This function takes the AST and converts it to Three Address Code, updating the symbol_table along the way
 pub fn generate_tac(
   ast: &Program,
-  symbol_table: &HashMap<String, TypeInfo>,
-) -> Result<Tac, String> {
-  let tac_builder = TacBuilder::new();
+  symbol_table: SymbolTable,
+) -> Result<(Tac, SymbolTable), String> {
+  let mut tac_builder = TacBuilder::new(symbol_table);
   let mut tac = tac_builder.build_program(ast)?;
-  let static_symbols = convert_symbols_to_tacky(&symbol_table);
+  let static_symbols = tac_builder.convert_symbols_to_tacky();
   add_static_variables_to_tac(&mut tac, static_symbols);
-  Ok(tac)
+  Ok((tac, tac_builder.symbol_table))
 }
 
+// This function iterates over the symbol table, and adds storage instructions for each static variable
 pub(crate) fn add_static_variables_to_tac(tac: &mut Tac, static_variables: Vec<StaticVariable>) {
   for static_var in static_variables {
     tac.top_level.push(TopLevel::StaticVariable(StaticVariable {
       name: static_var.name,
       global: static_var.global,
+      typ: static_var.typ,
       init: static_var.init,
     }));
   }
 }
 
-pub(crate) fn convert_symbols_to_tacky(
-  symbol_table: &HashMap<String, TypeInfo>,
-) -> Vec<StaticVariable> {
-  let mut tacky_defs: Vec<StaticVariable> = Vec::new();
-  for (name, entry) in symbol_table {
-    match &entry.attrs {
-      IdentifierAttributes::StaticAttr(init, glob) => match init {
-        ast::typechecker::InitialValue::Tentative => {
-          let global = match glob {
-            ast::typechecker::Global::Yes => true,
-            ast::typechecker::Global::No => false,
-          };
-          tacky_defs.push(StaticVariable {
-            name: name.clone(),
-            global: global,
-            init: 0,
-          });
-        }
-        ast::typechecker::InitialValue::Initial(n) => {
-          let global = match glob {
-            ast::typechecker::Global::Yes => true,
-            ast::typechecker::Global::No => false,
-          };
-          tacky_defs.push(StaticVariable {
-            name: name.clone(),
-            global,
-            init: *n,
-          });
-        }
-        ast::typechecker::InitialValue::NoInitializer => {}
-      },
-      _ => {}
-    }
-  }
-  tacky_defs
-}
-
+// Builder pattern to generate TAC from the AST. More or less a TacBuilder will DFS the AST and generate instructions for each node
 #[derive(Debug)]
 pub struct TacBuilder {
   instructions: Vec<Instruction>,
   loop_map: HashMap<String, (String, String)>,
+  symbol_table: HashMap<String, TypeInfo>,
   temp_counter: usize,
   label_counter: usize,
 }
 
 impl TacBuilder {
-  pub fn new() -> Self {
+  pub fn new(symbol_table: HashMap<String, TypeInfo>) -> Self {
     TacBuilder {
       instructions: Vec::new(),
       loop_map: HashMap::new(),
+      symbol_table,
       temp_counter: 0,
       label_counter: 0,
     }
   }
 
-  pub fn build_program(mut self, program: &Program) -> Result<Tac, String> {
-    let functions = match program {
-      Program::Program(decls) => decls
-        .iter()
-        .filter_map(|decl| {
-          if let Declaration::FuncDeclaration(func_decl) = decl {
-            Some(func_decl)
-          } else {
-            None
-          }
-        })
-        .map(|func_decl| self.build_function(func_decl))
-        .collect::<Result<Vec<_>, String>>()?
-        .into_iter()
-        .flatten()
-        .map(TopLevel::Function)
-        .collect(),
-    };
+  fn add_symbol(&mut self, name: String, typ: Type) {
+    self.symbol_table.insert(
+      name,
+      TypeInfo {
+        type_name: typ,
+        attrs: IdentifierAttributes::LocalAttr,
+      },
+    );
+  }
+
+  pub fn build_program(&mut self, program: &Program) -> Result<Tac, String> {
+    let declarations = program
+      .declarations
+      .iter()
+      .filter_map(|decl| {
+        if let Declaration::FuncDeclaration(func_decl) = decl {
+          Some(func_decl)
+        } else {
+          None
+        }
+      })
+      .map(|func_decl| self.build_function(func_decl))
+      .collect::<Result<Vec<_>, String>>()?
+      .into_iter()
+      .flatten()
+      .map(TopLevel::Function)
+      .collect();
 
     Ok(Tac {
-      top_level: functions,
+      top_level: declarations,
     })
+  }
+
+  pub(crate) fn convert_symbols_to_tacky(&mut self) -> Vec<StaticVariable> {
+    let mut tacky_defs: Vec<StaticVariable> = Vec::new();
+    for (name, entry) in &self.symbol_table {
+      match &entry.attrs {
+        IdentifierAttributes::StaticAttr(init, glob) => match init {
+          ast::typechecker::InitialValue::Tentative => {
+            let global = match glob {
+              ast::typechecker::Global::Yes => true,
+              ast::typechecker::Global::No => false,
+            };
+            tacky_defs.push(StaticVariable {
+              name: name.clone(),
+              global: global,
+              typ: entry.type_name.clone(),
+              init: match &entry.type_name {
+                Type::Int => StaticInit::Int(0),
+                Type::Long => StaticInit::Long(0),
+                Type::FunType(_, _) => unreachable!(),
+              },
+            });
+          }
+          ast::typechecker::InitialValue::Initial(n) => {
+            let global = match glob {
+              ast::typechecker::Global::Yes => true,
+              ast::typechecker::Global::No => false,
+            };
+            tacky_defs.push(StaticVariable {
+              name: name.clone(),
+              global,
+              typ: entry.type_name.clone(),
+              init: *n,
+            });
+          }
+          ast::typechecker::InitialValue::NoInitializer => {}
+        },
+        _ => {}
+      }
+    }
+    tacky_defs
   }
 
   fn build_function(&mut self, func: &FunctionDecl) -> Result<Option<Function>, String> {
@@ -177,27 +208,42 @@ impl TacBuilder {
 
   fn build_expression(&mut self, expr: &Expression) -> Result<Val, String> {
     match expr {
-      Expression::Int(n) => Ok(Val::Int(*n)),
-      Expression::Var(name) => Ok(Val::Var(name.clone())),
-      Expression::Binary(op, lhs, rhs) => Ok(self.build_binary_expression(*op, lhs, rhs)?),
-      Expression::Unary(op, expr) => Ok(self.build_unary_expression(*op, expr)?),
-      Expression::Assignment(lhs, rhs) => Ok(self.build_assignment(lhs, rhs)?),
-      Expression::Conditional(_, _, _) => todo!(),
-      Expression::FunctionCall(name, args) => {
+      Expression::Const(c, _) => Ok(Val::Const(*c)),
+      Expression::Var(name, _) => Ok(Val::Var(name.clone())),
+      Expression::Binary(op, lhs, rhs, typ) => {
+        Ok(self.build_binary_expression(*op, lhs, rhs, typ)?)
+      }
+      Expression::Unary(op, expr, _) => Ok(self.build_unary_expression(*op, expr)?),
+      Expression::Assignment(lhs, rhs, _) => Ok(self.build_assignment(lhs, rhs)?),
+      Expression::FunctionCall(name, args, typ) => {
         let mut new_args = Vec::new();
         for arg in args {
           let temp = self.build_expression(arg)?;
-          let arg = self.new_temp();
+          let arg = self.new_temp(&self.get_type(arg));
           self.add_instruction(Instruction::Copy(temp, arg.clone()));
           new_args.push(arg);
         }
-        let result = self.new_temp();
+        let result = self.new_temp(typ);
         self.add_instruction(Instruction::FunctionCall(
           name.clone(),
           new_args,
           result.clone(),
         ));
         Ok(result)
+      }
+      Expression::Cast(typ, inner) => {
+        let result = self.build_expression(inner)?;
+        if *typ == self.get_type(inner) {
+          Ok(result)
+        } else {
+          let casted = self.new_temp(typ);
+          if *typ == Type::Long {
+            self.add_instruction(Instruction::SignExtend(result, casted.clone()));
+          } else if *typ == Type::Long {
+            self.add_instruction(Instruction::Truncate(result, casted.clone()));
+          }
+          Ok(casted)
+        }
       }
     }
   }
@@ -207,6 +253,7 @@ impl TacBuilder {
     op: ast::BinaryOp,
     lhs: &Expression,
     rhs: &Expression,
+    typ: &Type,
   ) -> Result<Val, String> {
     match op {
       ast::BinaryOp::And => Ok(self.build_and_expression(lhs, rhs)?),
@@ -214,7 +261,7 @@ impl TacBuilder {
       _ => {
         let lhs_val = self.build_expression(lhs)?;
         let rhs_val = self.build_expression(rhs)?;
-        let result = self.new_temp();
+        let result = self.new_temp(typ);
         self.add_instruction(Instruction::Binary(
           self.binary_name_match(op),
           lhs_val,
@@ -251,8 +298,10 @@ impl TacBuilder {
   }
 
   // Helper methods
-  fn new_temp(&mut self) -> Val {
-    let temp = Val::Var(format!("t{}", self.temp_counter));
+  fn new_temp(&mut self, typ: &Type) -> Val {
+    let name = format!("t{}", self.temp_counter);
+    let temp = Val::Var(name.clone());
+    self.add_symbol(name, typ.clone());
     self.temp_counter += 1;
     temp
   }
@@ -293,14 +342,14 @@ impl TacBuilder {
     let val2 = self.build_expression(rhs)?;
     self.add_instruction(Instruction::JumpIfZero(val2, false_label.clone()));
 
-    let result = self.new_temp();
-    self.add_instruction(Instruction::Copy(Val::Int(1), result.clone()));
+    let result = self.new_temp(&Type::Int);
+    self.add_instruction(Instruction::Copy(Val::Const(Const::Int(1)), result.clone()));
 
     let end_label = self.new_label("end");
     self.add_instruction(Instruction::Jump(end_label.clone()));
 
     self.add_instruction(Instruction::Label(false_label));
-    self.add_instruction(Instruction::Copy(Val::Int(0), result.clone()));
+    self.add_instruction(Instruction::Copy(Val::Const(Const::Int(0)), result.clone()));
     self.add_instruction(Instruction::Label(end_label));
 
     Ok(result)
@@ -314,14 +363,14 @@ impl TacBuilder {
     let val2 = self.build_expression(rhs)?;
     self.add_instruction(Instruction::JumpIfNotZero(val2, true_label.clone()));
 
-    let result = self.new_temp();
-    self.add_instruction(Instruction::Copy(Val::Int(0), result.clone()));
+    let result = self.new_temp(&Type::Int);
+    self.add_instruction(Instruction::Copy(Val::Const(Const::Int(0)), result.clone()));
 
     let end_label = self.new_label("end");
     self.add_instruction(Instruction::Jump(end_label.clone()));
 
     self.add_instruction(Instruction::Label(true_label));
-    self.add_instruction(Instruction::Copy(Val::Int(1), result.clone()));
+    self.add_instruction(Instruction::Copy(Val::Const(Const::Int(1)), result.clone()));
     self.add_instruction(Instruction::Label(end_label));
 
     Ok(result)
@@ -329,7 +378,7 @@ impl TacBuilder {
 
   fn build_unary_expression(&mut self, op: ast::UnaryOp, expr: &Expression) -> Result<Val, String> {
     let val = self.build_expression(expr)?;
-    let result = self.new_temp();
+    let result = self.new_temp(&self.get_type(expr));
     self.add_instruction(Instruction::Unary(
       self.unary_name_match(op),
       val,
@@ -340,7 +389,7 @@ impl TacBuilder {
 
   fn build_assignment(&mut self, lhs: &Expression, rhs: &Expression) -> Result<Val, String> {
     let var_name = match lhs {
-      Expression::Var(name) => name.clone(),
+      Expression::Var(name, _) => name.clone(),
       _ => return Err("Left-hand side of assignment must be a variable".to_string()),
     };
     let result = self.build_expression(rhs)?;
@@ -451,6 +500,18 @@ impl TacBuilder {
     }
     Ok(())
   }
+
+  fn get_type(&self, expr: &Expression) -> Type {
+    match expr {
+      Expression::Const(_, typ) => typ.clone(),
+      Expression::Var(_, typ) => typ.clone(),
+      Expression::Binary(_, _, _, typ) => typ.clone(),
+      Expression::Unary(_, _, typ) => typ.clone(),
+      Expression::Assignment(_, _, typ) => typ.clone(),
+      Expression::FunctionCall(_, _, typ) => typ.clone(),
+      Expression::Cast(typ, _) => typ.clone(),
+    }
+  }
 }
 
 // Keep the existing type definitions
@@ -477,12 +538,15 @@ pub struct Function {
 pub struct StaticVariable {
   pub name: String,
   pub global: bool,
-  pub init: i32,
+  pub typ: Type,
+  pub init: StaticInit,
 }
 
 #[derive(Debug)]
 pub enum Instruction {
   Return(Val),
+  SignExtend(Val, Val),
+  Truncate(Val, Val),
   Unary(UnaryOp, Val, Val),
   Binary(BinaryOp, Val, Val, Val),
   Copy(Val, Val),
@@ -495,7 +559,7 @@ pub enum Instruction {
 
 #[derive(Debug, Clone)]
 pub enum Val {
-  Int(i32),
+  Const(Const),
   Var(String),
 }
 

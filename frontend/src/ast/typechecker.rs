@@ -187,12 +187,30 @@ impl TypeChecker {
 
     self.check_symbol_conflicts(&var.name, false)?;
 
-    // Add to symbol table with external linkage
+    // Check if there's already a declaration of this variable
+    let attrs = if let Some(existing) = self.get_symbol(&var.name) {
+      // If there's an existing declaration, preserve its attributes
+      // but ensure it has global linkage (which extern variables should have)
+      match &existing.attrs {
+        IdentifierAttributes::StaticAttr(init_val, _) => {
+          IdentifierAttributes::StaticAttr(init_val.clone(), Global::Yes)
+        }
+        _ => {
+          // If it's not a static attribute, treat as a new extern declaration
+          IdentifierAttributes::StaticAttr(InitialValue::NoInitializer, Global::Yes)
+        }
+      }
+    } else {
+      // No existing declaration, create new extern declaration
+      IdentifierAttributes::StaticAttr(InitialValue::NoInitializer, Global::Yes)
+    };
+
+    // Add to symbol table with the determined attributes
     self.add_symbol(
       &var.name,
       TypeInfo {
         type_name: var.typ.clone(),
-        attrs: IdentifierAttributes::StaticAttr(InitialValue::NoInitializer, Global::Yes),
+        attrs,
       },
     );
 
